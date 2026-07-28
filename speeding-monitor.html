@@ -545,7 +545,7 @@
       // directly, one request per device, in bounded batches.
       return Promise.all([
         runThrottled(speedCalls),
-        runDirectBatches(limitCalls, 5)
+        runDirectBatches(limitCalls, 12)
       ]).then(function (resultSets) {
         var speedResults = resultSets[0] || [];
         var limitResults = resultSets[1] || [];
