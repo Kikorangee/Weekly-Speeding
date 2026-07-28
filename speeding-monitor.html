@@ -528,22 +528,22 @@
           deviceSearch: { id: did }, diagnosticSearch: { id: speedDiag },
           fromDate: start.toISOString(), toDate: end.toISOString(), resultsLimit: STATUSDATA_RESULTS_LIMIT
         }}]);
-        limitCalls.push(['GetPostedRoadSpeedsForDevice', {
+        limitCalls.push(['Get', { typeName: 'StatusData', search: {
           deviceSearch: { id: did },
-          fromDate: start.toISOString(),
-          toDate: end.toISOString(),
-          postedRoadSpeedOptions: 'NoCommercial,NoEstimates'
-        }]);
+          diagnosticSearch: { id: 'DiagnosticPostedRoadSpeedId' },
+          fromDate: start.toISOString(), toDate: end.toISOString(),
+          resultsLimit: STATUSDATA_RESULTS_LIMIT
+        }}]);
       });
 
       dbg('Fetching speed/limit for ' + deviceIdsForDetail.length + ' distinct device(s) — ' +
         (speedCalls.length + limitCalls.length) + ' API calls total (covers ' + speedingEvents.length + ' events)');
 
-      // Standard Get calls are safe in multiCall. The road-speed method is not:
-      // run it directly in small batches to prevent the permanent "batch 1" lock.
+      // Both vehicle speed and posted-road-speed diagnostics are standard
+      // StatusData reads, so they can be fetched in bounded multiCall batches.
       return Promise.all([
         runThrottled(speedCalls),
-        runDirectBatches(limitCalls, 8)
+        runThrottled(limitCalls)
       ]).then(function (resultSets) {
         var speedResults = resultSets[0] || [];
         var limitResults = resultSets[1] || [];
