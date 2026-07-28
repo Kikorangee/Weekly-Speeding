@@ -473,7 +473,7 @@
       speedingEvents.forEach(function (ex) {
         var did = ex.device.id;
         if (!perDevice[did]) {
-          perDevice[did] = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [] };
+          perDevice[did] = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [], eventDetails: [] };
         }
         var agg = perDevice[did];
         agg.events += 1;
@@ -558,7 +558,7 @@
           var limits = limitResults[i] || [];
           var events = byDevice[did].events;
 
-          var agg = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [] };
+          var agg = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [], eventDetails: [] };
           events.forEach(function (ex) {
             var winStart = new Date(ex.activeFrom).getTime() - 30000;
             var winEnd = new Date(ex.activeTo || ex.activeFrom).getTime() + 30000;
@@ -578,14 +578,24 @@
             var limit = detailLimit != null && Number(detailLimit) > 0
               ? Number(detailLimit)
               : postedLimitAt(limits, new Date(ex.activeFrom).getTime(), winEnd);
+            var limitValid = isValidNzPostedLimit(limit);
+            var eventMinutes = minutesBetween(ex.activeFrom, ex.activeTo);
 
             agg.events += 1;
-            agg.totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
+            agg.totalMinutes += eventMinutes;
             if (maxSpeed > agg.maxSpeed) agg.maxSpeed = maxSpeed;
-            if (isValidNzPostedLimit(limit)) {
+            if (limitValid) {
               agg.speedLimits.push(Math.round(limit));
               if (maxSpeed > 0) agg.overLimitVals.push(maxSpeed - limit);
             }
+            agg.eventDetails.push({
+              activeFrom: ex.activeFrom,
+              activeTo: ex.activeTo,
+              minutes: eventMinutes,
+              maxSpeed: maxSpeed,
+              limit: limitValid ? Math.round(limit) : null,
+              over: (maxSpeed > 0 && limitValid) ? (maxSpeed - limit) : null
+            });
           });
           perDevice[did] = agg;
         });
@@ -593,7 +603,7 @@
         // Devices beyond the detail cap: still count events/time, no speed detail.
         allDeviceIds.slice(MAX_DEVICES_FOR_SPEED_DETAIL).forEach(function (did) {
           var events = byDevice[did].events;
-          var agg = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [] };
+          var agg = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [], eventDetails: [] };
           events.forEach(function (ex) {
             agg.events += 1;
             agg.totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
@@ -639,7 +649,7 @@
       var showAll = document.getElementById('showAllToggle').checked;
 
       var rows = devices.map(function (d) {
-        var agg = perDevice[d.id] || { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [] };
+        var agg = perDevice[d.id] || { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [], eventDetails: [] };
         var avgOver = agg.overLimitVals.length > 0
           ? agg.overLimitVals.reduce(function (a, b) { return a + b; }, 0) / agg.overLimitVals.length
           : null;
@@ -652,7 +662,8 @@
           maxSpeed: agg.maxSpeed,
           speedLimits: speedLimits,
           speedLimitLabel: speedLimits.length ? speedLimits.join(' / ') : 'N/A',
-          avgOver: avgOver
+          avgOver: avgOver,
+          eventDetails: (agg.eventDetails || []).slice().sort(function (a, b) { return b.maxSpeed - a.maxSpeed; })
         };
       });
 
@@ -698,7 +709,7 @@
 
       var html = '';
       var lastFleet = null;
-      filtered.forEach(function (r) {
+      filtered.forEach(function (r, idx) {
         var fleetCell;
         if (r.fleet !== lastFleet) {
           fleetCell = '<td style="padding:9px 12px;font-weight:600;color:#1a2b3c;border-top:2px solid #eef1f4;">' + escapeHtml(r.fleet) + '</td>';
@@ -712,9 +723,14 @@
           ? '<span style="background:#f8d7da;color:#842029;padding:2px 8px;border-radius:3px;font-weight:600;">✕</span>'
           : (flag === '!' ? '<span style="background:#fff3cd;color:#664d03;padding:2px 8px;border-radius:3px;font-weight:600;">!</span>' : '');
 
+        var hasDetail = r.eventDetails && r.eventDetails.length > 0;
+        var vehicleCell = hasDetail
+          ? '<span class="detail-toggle" data-idx="' + idx + '" style="cursor:pointer;display:inline-block;width:14px;color:#68788d;">▸</span> ' + escapeHtml(r.vehicle)
+          : '<span style="display:inline-block;width:14px;"></span> ' + escapeHtml(r.vehicle);
+
         html += '<tr>' +
           fleetCell +
-          '<td style="padding:9px 12px;">' + escapeHtml(r.vehicle) + '</td>' +
+          '<td style="padding:9px 12px;">' + vehicleCell + '</td>' +
           '<td style="padding:9px 12px;text-align:center;">' + flagBadge + '</td>' +
           '<td style="padding:9px 12px;text-align:right;' + shade(r.events, pEvents) + '">' + r.events + '</td>' +
           '<td style="padding:9px 12px;text-align:right;' + shade(r.totalMinutes, pMinutes) + '">' + r.totalMinutes.toFixed(2) + '</td>' +
@@ -722,12 +738,41 @@
           '<td style="padding:9px 12px;text-align:right;">' + escapeHtml(r.speedLimitLabel) + '</td>' +
           '<td style="padding:9px 12px;text-align:right;' + (r.avgOver != null ? shade(r.avgOver, pOver) : '') + '">' + (r.avgOver != null ? r.avgOver.toFixed(1) : 'N/A') + '</td>' +
           '</tr>';
+
+        if (hasDetail) {
+          html += '<tr class="detail-row" data-detail-idx="' + idx + '" style="display:none;">' +
+            '<td colspan="8" style="padding:0;background:#f8f9fb;border-top:1px solid #f2f4f6;">' +
+            eventDetailTable(r.eventDetails) +
+            '</td></tr>';
+        }
       });
       document.getElementById('tableBody').innerHTML = html;
 
       function shade(val, threshold) {
         return val >= threshold && threshold !== Infinity ? 'background:#fdecea;color:#842029;font-weight:600;' : '';
       }
+    }
+
+    // Per-vehicle drill-down: which speed limit each individual speeding event broke.
+    function eventDetailTable(eventDetails) {
+      var rows = eventDetails.map(function (ev) {
+        var when = ev.activeFrom ? new Date(ev.activeFrom).toLocaleString() : '—';
+        return '<tr>' +
+          '<td style="padding:6px 12px 6px 40px;color:#4a5568;">' + escapeHtml(when) + '</td>' +
+          '<td style="padding:6px 12px;text-align:right;color:#4a5568;">' + ev.minutes.toFixed(2) + '</td>' +
+          '<td style="padding:6px 12px;text-align:right;color:#4a5568;">' + (ev.maxSpeed > 0 ? ev.maxSpeed : '—') + '</td>' +
+          '<td style="padding:6px 12px;text-align:right;color:#4a5568;">' + (ev.limit != null ? ev.limit : '—') + '</td>' +
+          '<td style="padding:6px 12px;text-align:right;color:#4a5568;">' + (ev.over != null ? ev.over.toFixed(1) : '—') + '</td>' +
+          '</tr>';
+      }).join('');
+      return '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+        '<thead><tr style="color:#68788d;text-align:left;">' +
+        '<th style="padding:4px 12px 4px 40px;font-weight:600;">Event Date/Time</th>' +
+        '<th style="padding:4px 12px;text-align:right;font-weight:600;">Duration (Mins)</th>' +
+        '<th style="padding:4px 12px;text-align:right;font-weight:600;">Max Speed</th>' +
+        '<th style="padding:4px 12px;text-align:right;font-weight:600;">Speed Limit</th>' +
+        '<th style="padding:4px 12px;text-align:right;font-weight:600;">Over Limit</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
 
     function flagFor(r) {
@@ -957,6 +1002,29 @@
       var ws = XLSX.utils.json_to_sheet(data);
       var wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Speeding');
+
+      // Per-event breakdown: which specific limit each individual event broke,
+      // rather than the per-vehicle aggregate above.
+      var eventRows = [];
+      lastRows.forEach(function (r) {
+        (r.eventDetails || []).forEach(function (ev) {
+          eventRows.push({
+            Fleet: r.fleet,
+            Vehicle: r.vehicle,
+            'Event Start': ev.activeFrom ? new Date(ev.activeFrom).toLocaleString() : '',
+            'Event End': ev.activeTo ? new Date(ev.activeTo).toLocaleString() : '',
+            'Duration (Mins)': Number(ev.minutes.toFixed(2)),
+            'Max Speed (km/h)': ev.maxSpeed > 0 ? ev.maxSpeed : '',
+            'Speed Limit (km/h)': ev.limit != null ? ev.limit : '',
+            'Over Limit (km/h)': ev.over != null ? Number(ev.over.toFixed(1)) : ''
+          });
+        });
+      });
+      if (eventRows.length > 0) {
+        var wsEvents = XLSX.utils.json_to_sheet(eventRows);
+        XLSX.utils.book_append_sheet(wb, wsEvents, 'Speeding Events');
+      }
+
       var stamp = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, 'speeding-monitor-' + stamp + '.xlsx');
     }
@@ -980,6 +1048,16 @@
         document.getElementById('showAllToggle').onchange = loadData;
         document.getElementById('exportBtn').onclick = exportData;
         document.getElementById('downloadPdfBtn').onclick = downloadReportPdf;
+        document.getElementById('tableBody').addEventListener('click', function (e) {
+          var toggle = e.target.closest && e.target.closest('.detail-toggle');
+          if (!toggle) return;
+          var idx = toggle.getAttribute('data-idx');
+          var detailRow = document.querySelector('tr.detail-row[data-detail-idx="' + idx + '"]');
+          if (!detailRow) return;
+          var isHidden = detailRow.style.display === 'none';
+          detailRow.style.display = isHidden ? '' : 'none';
+          toggle.textContent = isHidden ? '▾' : '▸';
+        });
         document.getElementById('applyRulesBtn').onclick = function () {
           var boxes = document.querySelectorAll('#ruleList input[type=checkbox]');
           var ids = new Set();
