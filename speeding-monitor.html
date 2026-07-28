@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Speeding Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<div id="app" style="font-family:'Segoe UI',Arial,sans-serif;background:#f4f6f8;min-height:100vh;padding:20px;box-sizing:border-box;">
+
+  <div id="header" style="background:#fff;border-radius:8px;padding:16px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:16px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;">
+    <div>
+      <h2 style="margin:0;color:#1a2b3c;font-size:20px;">🚨 Speeding Monitor</h2>
+      <div id="dateRangeLabel" style="color:#68788d;font-size:13px;margin-top:4px;">Loading date range…</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <label style="font-size:13px;color:#4a5568;">Period:
+        <select id="daysSelect" style="margin-left:6px;padding:5px 8px;border-radius:4px;border:1px solid #ccd3db;">
+          <option value="7" selected>Previous 7 days</option>
+          <option value="14">Previous 14 days</option>
+          <option value="30">Previous 30 days</option>
+        </select>
+      </label>
+      <label style="font-size:13px;color:#4a5568;">
+        <input type="checkbox" id="showAllToggle"> Show all vehicles
+      </label>
+      <button id="exportBtn" style="background:#2d6cdf;color:#fff;border:none;padding:7px 14px;border-radius:4px;cursor:pointer;font-size:13px;">⬇ Export CSV/XLSX</button>
+      <button id="refreshBtn" style="background:#e74c3c;color:#fff;border:none;padding:7px 14px;border-radius:4px;cursor:pointer;font-size:13px;">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div id="cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px;"></div>
+
+  <div id="statusText" style="color:#68788d;font-size:13px;margin-bottom:10px;"></div>
+
+  <div style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);overflow:hidden;">
+    <div style="padding:12px 16px;border-bottom:1px solid #eef1f4;font-size:12px;color:#68788d;line-height:1.5;">
+      <strong>Recommend action on cases marked below.</strong>
+      Red shading = top 10% for that column across all vehicles shown.
+      &nbsp;&nbsp;<span style="background:#fff3cd;padding:1px 6px;border-radius:3px;">!</span> = Total Time 30&ndash;59&nbsp;min speeding, or Max Speed 120&ndash;129.9&nbsp;km/h.
+      &nbsp;&nbsp;<span style="background:#f8d7da;padding:1px 6px;border-radius:3px;">✕</span> = Total Time 60+&nbsp;min speeding, or Max Speed 130+&nbsp;km/h.
+    </div>
+    <div style="overflow-x:auto;">
+      <table id="speedTable" style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#1a2b3c;color:#fff;">
+            <th style="padding:10px 12px;text-align:left;">Fleet</th>
+            <th style="padding:10px 12px;text-align:left;">Vehicle</th>
+            <th style="padding:10px 12px;text-align:center;">Flags</th>
+            <th style="padding:10px 12px;text-align:right;">Number of Events</th>
+            <th style="padding:10px 12px;text-align:right;">Total Time (Mins) Speeding</th>
+            <th style="padding:10px 12px;text-align:right;">Max Speed (km/h)</th>
+            <th style="padding:10px 12px;text-align:right;">Avg Speed Over Limit</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr><td colspan="7" style="padding:24px;text-align:center;color:#68788d;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="debugToggleWrap" style="text-align:center;margin-top:14px;">
+    <button onclick="var d=document.getElementById('debugLog');d.style.display=d.style.display==='none'?'block':'none';" style="background:#dfe4ea;color:#333;border:none;padding:4px 14px;border-radius:4px;cursor:pointer;font-size:11px;">Toggle Debug Log</button>
+  </div>
+  <pre id="debugLog" style="display:none;background:#1e1e1e;color:#0f0;padding:10px;margin-top:8px;max-height:240px;overflow-y:auto;font-size:11px;border-radius:6px;"></pre>
+
+</div>
+
+<script>
+(function () {
+
+  function dbg(msg) {
+    var el = document.getElementById('debugLog');
+    if (el) {
+      var ts = new Date().toISOString().substring(11, 23);
+      el.textContent += '[' + ts + '] ' + msg + '\n';
+      el.scrollTop = el.scrollHeight;
+    }
+    console.log('[speeding-monitor] ' + msg);
+  }
+
+  // System / reserved group IDs we don't want to use as a "Fleet" label.
+  var RESERVED_GROUP_IDS = {
+    GroupCompanyId: true, GroupEverythingId: true, GroupDriverGroupsId: true,
+    GroupDriverId: true, GroupFuelAndEnergyId: true, GroupPrivateId: true,
+    GroupZoneClusterId: true, GroupZoneTypeObjectId: true, GroupSecurityId: true,
+    GroupTMPLId: true, GroupOrganizationId: true, GroupPassengerId: true,
+    GroupAllVehiclesId: true, GroupNoAccessId: true
+  };
+
+  geotab.addin["speeding-monitor"] = function () {
+    var apiRef = null;
+    var lastRows = [];   // flattened rows for export
+    var lastFrom = null, lastTo = null;
+
+    // ---------- helpers ----------
+
+    function apiGet(typeName, search) {
+      return new Promise(function (resolve, reject) {
+        apiRef.call('Get', { typeName: typeName, search: search || {} }, function (result) {
+          dbg('Get ' + typeName + ' → ' + (result ? result.length : 0) + ' records');
+          resolve(result || []);
+        }, function (err) {
+          dbg('Get ' + typeName + ' ERROR: ' + JSON.stringify(err));
+          reject(err);
+        });
+      });
+    }
+
+    function apiMultiCall(calls) {
+      return new Promise(function (resolve, reject) {
+        if (calls.length === 0) { resolve([]); return; }
+        apiRef.multiCall(calls, function (results) { resolve(results || []); },
+          function (err) { dbg('multiCall ERROR: ' + JSON.stringify(err)); reject(err); });
+      });
+    }
+
+    // Demo databases (per Geotab vibe-guide) lack DiagnosticSpeedId (GPS speed).
+    // Detect once and fall back to DiagnosticEngineRoadSpeedId if needed.
+    function detectSpeedDiagnostic() {
+      var weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      return apiGet('StatusData', {
+        diagnosticSearch: { id: 'DiagnosticSpeedId' },
+        fromDate: weekAgo.toISOString(),
+        resultsLimit: 1
+      }).then(function (rows) {
+        var diag = rows.length > 0 ? 'DiagnosticSpeedId' : 'DiagnosticEngineRoadSpeedId';
+        dbg('Using speed diagnostic: ' + diag + (rows.length === 0 ? ' (demo database detected)' : ''));
+        return diag;
+      }).catch(function () {
+        dbg('Speed diagnostic detection failed, defaulting to DiagnosticEngineRoadSpeedId');
+        return 'DiagnosticEngineRoadSpeedId';
+      });
+    }
+
+    function fleetNameForDevice(device, groupMap) {
+      if (!device.groups) return 'Unassigned';
+      for (var i = 0; i < device.groups.length; i++) {
+        var gid = device.groups[i].id;
+        if (RESERVED_GROUP_IDS[gid]) continue;
+        var g = groupMap[gid];
+        if (g && g.name) return g.name;
+      }
+      return 'Unassigned';
+    }
+
+    function minutesBetween(fromIso, toIso) {
+      if (!fromIso || !toIso) return 0;
+      var ms = new Date(toIso).getTime() - new Date(fromIso).getTime();
+      return ms > 0 ? ms / 60000 : 0;
+    }
+
+    // Fetch max speed + posted limit for one exception's active window (±30s buffer)
+    function speedDetailCalls(ex, speedDiag) {
+      var start = new Date(ex.activeFrom); start.setSeconds(start.getSeconds() - 30);
+      var end = new Date(ex.activeTo || ex.activeFrom); end.setSeconds(end.getSeconds() + 30);
+      return [
+        ['Get', { typeName: 'StatusData', search: {
+          deviceSearch: { id: ex.device.id }, diagnosticSearch: { id: speedDiag },
+          fromDate: start.toISOString(), toDate: end.toISOString()
+        }}],
+        ['Get', { typeName: 'StatusData', search: {
+          deviceSearch: { id: ex.device.id }, diagnosticSearch: { id: 'DiagnosticPostedRoadSpeedId' },
+          fromDate: start.toISOString(), toDate: end.toISOString()
+        }}]
+      ];
+    }
+
+    function percentile90(values) {
+      if (values.length === 0) return Infinity;
+      var sorted = values.slice().sort(function (a, b) { return a - b; });
+      var idx = Math.ceil(0.9 * sorted.length) - 1;
+      return sorted[Math.max(0, Math.min(idx, sorted.length - 1))];
+    }
+
+    function setStatus(msg) { document.getElementById('statusText').textContent = msg; }
+
+    // ---------- main load ----------
+
+    function loadData() {
+      var days = parseInt(document.getElementById('daysSelect').value, 10);
+      var toDate = new Date();
+      var fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - days);
+      lastFrom = fromDate; lastTo = toDate;
+
+      document.getElementById('dateRangeLabel').textContent =
+        fromDate.toLocaleString() + '  →  ' + toDate.toLocaleString() + '  (' + days + ' days)';
+      document.getElementById('tableBody').innerHTML =
+        '<tr><td colspan="7" style="padding:24px;text-align:center;color:#68788d;">Loading speeding events…</td></tr>';
+      document.getElementById('cards').innerHTML = '';
+      setStatus('');
+
+      Promise.all([
+        apiGet('Rule', {}),
+        apiGet('Device', {}),
+        apiGet('Group', {}),
+        apiGet('ExceptionEvent', { fromDate: fromDate.toISOString(), toDate: toDate.toISOString() }),
+        detectSpeedDiagnostic()
+      ]).then(function (results) {
+        var rules = results[0], devices = results[1], groups = results[2],
+            exceptions = results[3], speedDiag = results[4];
+
+        var ruleMap = {};
+        rules.forEach(function (r) { ruleMap[r.id] = r.name || r.id; });
+
+        var speedingEvents = exceptions.filter(function (ex) {
+          var name = (ex.rule && ruleMap[ex.rule.id]) || '';
+          return /speed/i.test(name);
+        });
+
+        dbg('Speeding exceptions: ' + speedingEvents.length + ' of ' + exceptions.length + ' total exceptions');
+
+        var deviceMap = {}; devices.forEach(function (d) { deviceMap[d.id] = d; });
+        var groupMap = {}; groups.forEach(function (g) { groupMap[g.id] = g; });
+
+        if (speedingEvents.length === 0) {
+          renderTable([], devices, groupMap, {});
+          setStatus('No speeding events found in the last ' + days + ' days.');
+          return;
+        }
+
+        // Cap detail lookups to keep this responsive on large fleets
+        var CAP = 400;
+        var capped = speedingEvents.slice(0, CAP);
+        if (speedingEvents.length > CAP) {
+          dbg('Capping speed-detail lookups to ' + CAP + ' of ' + speedingEvents.length + ' events');
+        }
+
+        var calls = [];
+        capped.forEach(function (ex) { calls = calls.concat(speedDetailCalls(ex, speedDiag)); });
+
+        var batchSize = 100; // 50 events × 2 calls each
+        var batches = [];
+        for (var i = 0; i < calls.length; i += batchSize) batches.push(calls.slice(i, i + batchSize));
+
+        dbg('Fetching speed detail in ' + batches.length + ' batch(es)');
+        var allResults = [];
+        var chain = Promise.resolve();
+        batches.forEach(function (batch, idx) {
+          chain = chain.then(function () {
+            setStatus('Fetching speed detail… batch ' + (idx + 1) + '/' + batches.length);
+            return apiMultiCall(batch);
+          }).then(function (r) { allResults = allResults.concat(r); });
+        });
+
+        return chain.then(function () {
+          // Aggregate per device
+          var perDevice = {}; // deviceId -> {events:[], maxSpeed, totalMinutes, overLimitVals:[]}
+
+          capped.forEach(function (ex, i) {
+            var speeds = allResults[i * 2] || [];
+            var limits = allResults[i * 2 + 1] || [];
+
+            var maxSpeed = 0;
+            speeds.forEach(function (s) { if (s.data > maxSpeed) maxSpeed = s.data; });
+            var limit = limits.length > 0 ? limits[0].data : null;
+
+            var did = ex.device.id;
+            if (!perDevice[did]) perDevice[did] = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [] };
+            var agg = perDevice[did];
+            agg.events += 1;
+            agg.totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
+            if (maxSpeed > agg.maxSpeed) agg.maxSpeed = maxSpeed;
+            if (limit != null && limit > 0 && maxSpeed > 0) agg.overLimitVals.push(maxSpeed - limit);
+          });
+
+          // Any speeding events beyond the cap still count toward events/time, even without speed detail
+          if (speedingEvents.length > CAP) {
+            speedingEvents.slice(CAP).forEach(function (ex) {
+              var did = ex.device.id;
+              if (!perDevice[did]) perDevice[did] = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [] };
+              perDevice[did].events += 1;
+              perDevice[did].totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
+            });
+          }
+
+          renderTable(speedingEvents, devices, groupMap, perDevice);
+          setStatus(speedingEvents.length + ' speeding event(s) across ' + Object.keys(perDevice).length +
+            ' vehicle(s) in the last ' + days + ' days.');
+        });
+      }).catch(function (err) {
+        dbg('FATAL: ' + JSON.stringify(err));
+        document.getElementById('tableBody').innerHTML =
+          '<tr><td colspan="7" style="padding:24px;text-align:center;color:#c0392b;">Error loading data — see debug log below.</td></tr>';
+        setStatus('Error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+      });
+    }
+
+    // ---------- render ----------
+
+    function renderTable(speedingEvents, devices, groupMap, perDevice) {
+      var showAll = document.getElementById('showAllToggle').checked;
+
+      var rows = devices.map(function (d) {
+        var agg = perDevice[d.id] || { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [] };
+        var avgOver = agg.overLimitVals.length > 0
+          ? agg.overLimitVals.reduce(function (a, b) { return a + b; }, 0) / agg.overLimitVals.length
+          : null;
+        return {
+          fleet: fleetNameForDevice(d, groupMap),
+          vehicle: d.name,
+          events: agg.events,
+          totalMinutes: agg.totalMinutes,
+          maxSpeed: agg.maxSpeed,
+          avgOver: avgOver
+        };
+      });
+
+      var filtered = showAll ? rows : rows.filter(function (r) { return r.events > 0; });
+      filtered.sort(function (a, b) {
+        if (a.fleet !== b.fleet) return a.fleet.localeCompare(b.fleet);
+        return b.totalMinutes - a.totalMinutes;
+      });
+
+      lastRows = filtered;
+
+      // Top-10% thresholds per numeric column (computed over the rows being shown)
+      var pEvents = percentile90(filtered.map(function (r) { return r.events; }));
+      var pMinutes = percentile90(filtered.map(function (r) { return r.totalMinutes; }));
+      var pMaxSpeed = percentile90(filtered.map(function (r) { return r.maxSpeed; }));
+      var pOver = percentile90(filtered.filter(function (r) { return r.avgOver != null; }).map(function (r) { return r.avgOver; }));
+
+      // Summary cards
+      var totalEvents = filtered.reduce(function (s, r) { return s + r.events; }, 0);
+      var totalMinutes = filtered.reduce(function (s, r) { return s + r.totalMinutes; }, 0);
+      var flaggedCount = filtered.filter(function (r) { return flagFor(r) === '✕'; }).length;
+      var fleetsCount = new Set(filtered.map(function (r) { return r.fleet; })).size;
+
+      document.getElementById('cards').innerHTML =
+        card('Total Speeding Events', totalEvents) +
+        card('Total Time Speeding', totalMinutes.toFixed(1) + ' min') +
+        card('Vehicles Flagged (✕)', flaggedCount, flaggedCount > 0 ? '#c0392b' : '#1a2b3c') +
+        card('Fleets Monitored', fleetsCount);
+
+      if (filtered.length === 0) {
+        document.getElementById('tableBody').innerHTML =
+          '<tr><td colspan="7" style="padding:24px;text-align:center;color:#68788d;">No vehicles to display.</td></tr>';
+        return;
+      }
+
+      var html = '';
+      var lastFleet = null;
+      filtered.forEach(function (r) {
+        var fleetCell = '';
+        if (r.fleet !== lastFleet) {
+          fleetCell = '<td style="padding:9px 12px;font-weight:600;color:#1a2b3c;border-top:2px solid #eef1f4;">' + escapeHtml(r.fleet) + '</td>';
+          lastFleet = r.fleet;
+        } else {
+          fleetCell = '<td style="padding:9px 12px;border-top:1px solid #f2f4f6;"></td>';
+        }
+
+        var flag = flagFor(r);
+        var flagBadge = flag === '✕'
+          ? '<span style="background:#f8d7da;color:#842029;padding:2px 8px;border-radius:3px;font-weight:600;">✕</span>'
+          : (flag === '!' ? '<span style="background:#fff3cd;color:#664d03;padding:2px 8px;border-radius:3px;font-weight:600;">!</span>' : '');
+
+        html += '<tr>' +
+          fleetCell +
+          '<td style="padding:9px 12px;">' + escapeHtml(r.vehicle) + '</td>' +
+          '<td style="padding:9px 12px;text-align:center;">' + flagBadge + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;' + shade(r.events, pEvents) + '">' + r.events + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;' + shade(r.totalMinutes, pMinutes) + '">' + r.totalMinutes.toFixed(2) + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;' + shade(r.maxSpeed, pMaxSpeed) + '">' + (r.maxSpeed > 0 ? r.maxSpeed : '—') + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;' + (r.avgOver != null ? shade(r.avgOver, pOver) : '') + '">' + (r.avgOver != null ? r.avgOver.toFixed(1) : 'N/A') + '</td>' +
+          '</tr>';
+      });
+      document.getElementById('tableBody').innerHTML = html;
+
+      function shade(val, threshold) {
+        return val >= threshold && threshold !== Infinity ? 'background:#fdecea;color:#842029;font-weight:600;' : '';
+      }
+    }
+
+    function flagFor(r) {
+      if (r.totalMinutes >= 60 || r.maxSpeed >= 130) return '✕';
+      if ((r.totalMinutes >= 30 && r.totalMinutes < 60) || (r.maxSpeed >= 120 && r.maxSpeed < 130)) return '!';
+      return '';
+    }
+
+    function card(label, value, color) {
+      return '<div style="background:#fff;border-radius:8px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">' +
+        '<div style="font-size:12px;color:#68788d;margin-bottom:4px;">' + label + '</div>' +
+        '<div style="font-size:22px;font-weight:700;color:' + (color || '#1a2b3c') + ';">' + value + '</div></div>';
+    }
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function exportData() {
+      if (lastRows.length === 0) { alert('Nothing to export yet.'); return; }
+      var data = lastRows.map(function (r) {
+        return {
+          Fleet: r.fleet,
+          Vehicle: r.vehicle,
+          Flag: flagFor(r),
+          'Number of Events': r.events,
+          'Total Time (Mins) Speeding': Number(r.totalMinutes.toFixed(2)),
+          'Max Speed (km/h)': r.maxSpeed || '',
+          'Avg Speed Over Limit': r.avgOver != null ? Number(r.avgOver.toFixed(1)) : 'N/A'
+        };
+      });
+      var ws = XLSX.utils.json_to_sheet(data);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Speeding');
+      var stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, 'speeding-monitor-' + stamp + '.xlsx');
+    }
+
+    // ---------- lifecycle ----------
+
+    return {
+      initialize: function (api, state, callback) {
+        apiRef = api;
+        dbg('initialize()');
+        api.getSession(function (session) {
+          dbg('Session — user: ' + session.userName + ', db: ' + session.database);
+        });
+
+        document.getElementById('refreshBtn').onclick = loadData;
+        document.getElementById('daysSelect').onchange = loadData;
+        document.getElementById('showAllToggle').onchange = loadData;
+        document.getElementById('exportBtn').onclick = exportData;
+
+        loadData();
+        callback();
+      },
+      focus: function (api, state) {
+        apiRef = api;
+        dbg('focus()');
+      },
+      blur: function () {
+        dbg('blur()');
+      }
+    };
+  };
+
+})();
+</script>
+</body>
+</html>
