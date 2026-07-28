@@ -72,6 +72,8 @@
             <th style="padding:9px 12px;text-align:right;">Events</th>
             <th style="padding:9px 12px;text-align:right;">Total Time (Mins)</th>
             <th style="padding:9px 12px;text-align:right;">Max Speed</th>
+            <th style="padding:9px 12px;text-align:left;">Max Speed Date/Time</th>
+            <th style="padding:9px 12px;text-align:center;">Location</th>
             <th style="padding:9px 12px;text-align:right;">Speed Limit(s) Triggered</th>
             <th style="padding:9px 12px;text-align:right;">Avg Over Limit</th>
           </tr>
@@ -98,12 +100,14 @@
             <th style="padding:10px 12px;text-align:right;">Number of Events</th>
             <th style="padding:10px 12px;text-align:right;">Total Time (Mins) Speeding</th>
             <th style="padding:10px 12px;text-align:right;">Max Speed (km/h)</th>
+            <th style="padding:10px 12px;text-align:left;">Max Speed Date/Time</th>
+            <th style="padding:10px 12px;text-align:center;">Location</th>
             <th style="padding:10px 12px;text-align:right;">Speed Limit(s) Triggered (km/h)</th>
             <th style="padding:10px 12px;text-align:right;">Avg Speed Over Limit</th>
           </tr>
         </thead>
         <tbody id="tableBody">
-          <tr><td colspan="8" style="padding:24px;text-align:center;color:#68788d;">Loading…</td></tr>
+          <tr><td colspan="10" style="padding:24px;text-align:center;color:#68788d;">Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -376,7 +380,7 @@
       lastRangeLabel = fromDate.toLocaleString() + '  →  ' + toDate.toLocaleString() + '  (' + days + ' days)';
       document.getElementById('dateRangeLabel').textContent = lastRangeLabel;
       document.getElementById('tableBody').innerHTML =
-        '<tr><td colspan="8" style="padding:24px;text-align:center;color:#68788d;">Loading…</td></tr>';
+        '<tr><td colspan="10" style="padding:24px;text-align:center;color:#68788d;">Loading…</td></tr>';
       document.getElementById('cards').innerHTML = '';
       setStatus('Loading…');
 
@@ -389,7 +393,7 @@
           isLoading = false;
           setButtonsEnabled(true);
           document.getElementById('tableBody').innerHTML =
-            '<tr><td colspan="8" style="padding:24px;text-align:center;color:#68788d;">No speeding rules selected.</td></tr>';
+            '<tr><td colspan="10" style="padding:24px;text-align:center;color:#68788d;">No speeding rules selected.</td></tr>';
           setStatus('Select at least one rule above, then click "Apply & Load".');
           return;
         }
@@ -460,7 +464,7 @@
       }).catch(function (err) {
         dbg('FATAL: ' + (err && err.message ? err.message : JSON.stringify(err)));
         document.getElementById('tableBody').innerHTML =
-          '<tr><td colspan="8" style="padding:24px;text-align:center;color:#c0392b;">Error loading data — see debug log below.</td></tr>';
+          '<tr><td colspan="10" style="padding:24px;text-align:center;color:#c0392b;">Error loading data — see debug log below.</td></tr>';
         setStatus('Error: ' + (err && err.message ? err.message : JSON.stringify(err)));
       }).then(function () {
         isLoading = false;
@@ -564,10 +568,18 @@
             var winEnd = new Date(ex.activeTo || ex.activeFrom).getTime() + 30000;
 
             var maxSpeed = 0;
+            var maxSpeedAt = null;
+            var maxSpeedLat = null;
+            var maxSpeedLon = null;
             speeds.forEach(function (s) {
               var t = new Date(s.dateTime).getTime();
               var observedSpeed = Number(s.speed != null ? s.speed : s.data);
-              if (t >= winStart && t <= winEnd && observedSpeed > maxSpeed) maxSpeed = observedSpeed;
+              if (t >= winStart && t <= winEnd && observedSpeed > maxSpeed) {
+                maxSpeed = observedSpeed;
+                maxSpeedAt = s.dateTime;
+                maxSpeedLat = s.latitude != null ? s.latitude : null;
+                maxSpeedLon = s.longitude != null ? s.longitude : null;
+              }
             });
 
             var detailLimit = ex.details && (
@@ -593,6 +605,9 @@
               activeTo: ex.activeTo,
               minutes: eventMinutes,
               maxSpeed: maxSpeed,
+              maxSpeedAt: maxSpeedAt,
+              lat: maxSpeedLat,
+              lon: maxSpeedLon,
               limit: limitValid ? Math.round(limit) : null,
               over: (maxSpeed > 0 && limitValid) ? (maxSpeed - limit) : null
             });
@@ -654,6 +669,8 @@
           ? agg.overLimitVals.reduce(function (a, b) { return a + b; }, 0) / agg.overLimitVals.length
           : null;
         var speedLimits = Array.from(new Set(agg.speedLimits || [])).sort(function (a, b) { return a - b; });
+        var eventDetails = (agg.eventDetails || []).slice().sort(function (a, b) { return b.maxSpeed - a.maxSpeed; });
+        var worstEvent = eventDetails.length > 0 && eventDetails[0].maxSpeed > 0 ? eventDetails[0] : null;
         return {
           fleet: fleetNameForDevice(d, groupMap),
           vehicle: d.name,
@@ -663,7 +680,10 @@
           speedLimits: speedLimits,
           speedLimitLabel: speedLimits.length ? speedLimits.join(' / ') : 'N/A',
           avgOver: avgOver,
-          eventDetails: (agg.eventDetails || []).slice().sort(function (a, b) { return b.maxSpeed - a.maxSpeed; })
+          eventDetails: eventDetails,
+          maxSpeedAt: worstEvent ? worstEvent.maxSpeedAt : null,
+          maxSpeedLat: worstEvent ? worstEvent.lat : null,
+          maxSpeedLon: worstEvent ? worstEvent.lon : null
         };
       });
 
@@ -699,7 +719,7 @@
 
       if (filtered.length === 0) {
         document.getElementById('tableBody').innerHTML =
-          '<tr><td colspan="8" style="padding:24px;text-align:center;color:#68788d;">No vehicles to display.</td></tr>';
+          '<tr><td colspan="10" style="padding:24px;text-align:center;color:#68788d;">No vehicles to display.</td></tr>';
         document.getElementById('summaryWrap').style.display = 'none';
         lastSummaryRows = [];
         return;
@@ -735,13 +755,15 @@
           '<td style="padding:9px 12px;text-align:right;' + shade(r.events, pEvents) + '">' + r.events + '</td>' +
           '<td style="padding:9px 12px;text-align:right;' + shade(r.totalMinutes, pMinutes) + '">' + r.totalMinutes.toFixed(2) + '</td>' +
           '<td style="padding:9px 12px;text-align:right;' + shade(r.maxSpeed, pMaxSpeed) + '">' + (r.maxSpeed > 0 ? r.maxSpeed : '—') + '</td>' +
+          '<td style="padding:9px 12px;">' + escapeHtml(fmtDateTime(r.maxSpeedAt)) + '</td>' +
+          '<td style="padding:9px 12px;text-align:center;">' + mapsLink(r.maxSpeedLat, r.maxSpeedLon) + '</td>' +
           '<td style="padding:9px 12px;text-align:right;">' + escapeHtml(r.speedLimitLabel) + '</td>' +
           '<td style="padding:9px 12px;text-align:right;' + (r.avgOver != null ? shade(r.avgOver, pOver) : '') + '">' + (r.avgOver != null ? r.avgOver.toFixed(1) : 'N/A') + '</td>' +
           '</tr>';
 
         if (hasDetail) {
           html += '<tr class="detail-row" data-detail-idx="' + idx + '" style="display:none;">' +
-            '<td colspan="8" style="padding:0;background:#f8f9fb;border-top:1px solid #f2f4f6;">' +
+            '<td colspan="10" style="padding:0;background:#f8f9fb;border-top:1px solid #f2f4f6;">' +
             eventDetailTable(r.eventDetails) +
             '</td></tr>';
         }
@@ -756,20 +778,22 @@
     // Per-vehicle drill-down: which speed limit each individual speeding event broke.
     function eventDetailTable(eventDetails) {
       var rows = eventDetails.map(function (ev) {
-        var when = ev.activeFrom ? new Date(ev.activeFrom).toLocaleString() : '—';
+        var when = fmtDateTime(ev.maxSpeedAt || ev.activeFrom);
         return '<tr>' +
           '<td style="padding:6px 12px 6px 40px;color:#4a5568;">' + escapeHtml(when) + '</td>' +
           '<td style="padding:6px 12px;text-align:right;color:#4a5568;">' + ev.minutes.toFixed(2) + '</td>' +
           '<td style="padding:6px 12px;text-align:right;color:#4a5568;">' + (ev.maxSpeed > 0 ? ev.maxSpeed : '—') + '</td>' +
+          '<td style="padding:6px 12px;text-align:center;color:#4a5568;">' + mapsLink(ev.lat, ev.lon) + '</td>' +
           '<td style="padding:6px 12px;text-align:right;color:#4a5568;">' + (ev.limit != null ? ev.limit : '—') + '</td>' +
           '<td style="padding:6px 12px;text-align:right;color:#4a5568;">' + (ev.over != null ? ev.over.toFixed(1) : '—') + '</td>' +
           '</tr>';
       }).join('');
       return '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
         '<thead><tr style="color:#68788d;text-align:left;">' +
-        '<th style="padding:4px 12px 4px 40px;font-weight:600;">Event Date/Time</th>' +
+        '<th style="padding:4px 12px 4px 40px;font-weight:600;">Peak Speed Date/Time</th>' +
         '<th style="padding:4px 12px;text-align:right;font-weight:600;">Duration (Mins)</th>' +
         '<th style="padding:4px 12px;text-align:right;font-weight:600;">Max Speed</th>' +
+        '<th style="padding:4px 12px;text-align:center;font-weight:600;">Location</th>' +
         '<th style="padding:4px 12px;text-align:right;font-weight:600;">Speed Limit</th>' +
         '<th style="padding:4px 12px;text-align:right;font-weight:600;">Over Limit</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
@@ -827,6 +851,8 @@
           '<td style="padding:8px 12px;border-top:1px solid #f2f4f6;text-align:right;">' + r.events + '</td>' +
           '<td style="padding:8px 12px;border-top:1px solid #f2f4f6;text-align:right;">' + r.totalMinutes.toFixed(2) + '</td>' +
           '<td style="padding:8px 12px;border-top:1px solid #f2f4f6;text-align:right;">' + (r.maxSpeed > 0 ? r.maxSpeed : '—') + '</td>' +
+          '<td style="padding:8px 12px;border-top:1px solid #f2f4f6;">' + escapeHtml(fmtDateTime(r.maxSpeedAt)) + '</td>' +
+          '<td style="padding:8px 12px;border-top:1px solid #f2f4f6;text-align:center;">' + mapsLink(r.maxSpeedLat, r.maxSpeedLon) + '</td>' +
           '<td style="padding:8px 12px;border-top:1px solid #f2f4f6;text-align:right;">' + escapeHtml(r.speedLimitLabel) + '</td>' +
           '<td style="padding:8px 12px;border-top:1px solid #f2f4f6;text-align:right;">' + (r.avgOver != null ? r.avgOver.toFixed(1) : 'N/A') + '</td>' +
           '</tr>';
@@ -907,6 +933,7 @@
           String(r.events),
           r.totalMinutes.toFixed(1),
           r.maxSpeed > 0 ? String(r.maxSpeed) : '',
+          fmtDateTime(r.maxSpeedAt),
           r.speedLimitLabel === 'N/A' ? '' : r.speedLimitLabel,
           r.avgOver != null ? r.avgOver.toFixed(1) : ''
         ];
@@ -914,19 +941,20 @@
 
       doc.autoTable({
         startY: 35,
-        head: [['', 'Fleet', 'Vehicle', 'Number of Events', 'Total Time (Mins) Speeding', 'Max of Max Speed (km/h)', 'Speed Limit(s) Triggered (km/h)', 'Average of Speed Over Limit']],
+        head: [['', 'Fleet', 'Vehicle', 'Number of Events', 'Total Time (Mins) Speeding', 'Max of Max Speed (km/h)', 'Max Speed Date/Time', 'Speed Limit(s) Triggered (km/h)', 'Average of Speed Over Limit']],
         body: body,
         styles: { fontSize: 9, cellPadding: 2.5, lineColor: [222, 228, 234], lineWidth: 0.1 },
         headStyles: { fillColor: [26, 43, 60], textColor: 255, fontSize: 9, halign: 'center', valign: 'middle' },
         columnStyles: {
           0: { cellWidth: 9, halign: 'center', fontStyle: 'bold' },
-          1: { cellWidth: 46, fontStyle: 'bold' },
-          2: { cellWidth: 40 },
+          1: { cellWidth: 38, fontStyle: 'bold' },
+          2: { cellWidth: 34 },
           3: { halign: 'right' },
           4: { halign: 'right' },
           5: { halign: 'right' },
-          6: { halign: 'right' },
-          7: { halign: 'right' }
+          6: { cellWidth: 32 },
+          7: { halign: 'right' },
+          8: { halign: 'right' }
         },
         didParseCell: function (data) {
           if (data.section !== 'body') return;
@@ -943,7 +971,7 @@
             (col === 3 && p.events !== Infinity && r.events >= p.events) ||
             (col === 4 && p.minutes !== Infinity && r.totalMinutes >= p.minutes) ||
             (col === 5 && p.maxSpeed !== Infinity && r.maxSpeed > 0 && r.maxSpeed >= p.maxSpeed) ||
-            (col === 7 && p.over !== Infinity && r.avgOver != null && r.avgOver >= p.over);
+            (col === 8 && p.over !== Infinity && r.avgOver != null && r.avgOver >= p.over);
 
           if (hit) {
             data.cell.styles.fillColor = RED_FILL;
@@ -978,6 +1006,18 @@
       });
     }
 
+    function fmtDateTime(iso) {
+      return iso ? new Date(iso).toLocaleString() : '—';
+    }
+
+    // Google Maps deep link for a max-speed event's GPS position, so a fleet
+    // manager can jump straight from the table to where it happened.
+    function mapsLink(lat, lon) {
+      if (lat == null || lon == null) return '';
+      var url = 'https://www.google.com/maps?q=' + encodeURIComponent(lat) + ',' + encodeURIComponent(lon);
+      return '<a href="' + url + '" target="_blank" rel="noopener">Map</a>';
+    }
+
     function setButtonsEnabled(enabled) {
       ['refreshBtn', 'exportBtn', 'applyRulesBtn', 'daysSelect', 'showAllToggle', 'pdfRankSelect', 'downloadPdfBtn'].forEach(function (id) {
         var el = document.getElementById(id);
@@ -995,6 +1035,8 @@
           'Number of Events': r.events,
           'Total Time (Mins) Speeding': Number(r.totalMinutes.toFixed(2)),
           'Max Speed (km/h)': r.maxSpeed || '',
+          'Max Speed Date/Time': r.maxSpeedAt ? new Date(r.maxSpeedAt).toLocaleString() : '',
+          'Max Speed Location': (r.maxSpeedLat != null && r.maxSpeedLon != null) ? (r.maxSpeedLat + ', ' + r.maxSpeedLon) : '',
           'Speed Limit(s) Triggered (km/h)': r.speedLimitLabel === 'N/A' ? '' : r.speedLimitLabel,
           'Avg Speed Over Limit': r.avgOver != null ? Number(r.avgOver.toFixed(1)) : 'N/A'
         };
@@ -1015,6 +1057,8 @@
             'Event End': ev.activeTo ? new Date(ev.activeTo).toLocaleString() : '',
             'Duration (Mins)': Number(ev.minutes.toFixed(2)),
             'Max Speed (km/h)': ev.maxSpeed > 0 ? ev.maxSpeed : '',
+            'Peak Speed Date/Time': ev.maxSpeedAt ? new Date(ev.maxSpeedAt).toLocaleString() : '',
+            'Location': (ev.lat != null && ev.lon != null) ? (ev.lat + ', ' + ev.lon) : '',
             'Speed Limit (km/h)': ev.limit != null ? ev.limit : '',
             'Over Limit (km/h)': ev.over != null ? Number(ev.over.toFixed(1)) : ''
           });
