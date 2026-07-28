@@ -524,26 +524,26 @@
         var b = byDevice[did];
         var start = new Date(b.minStart); start.setSeconds(start.getSeconds() - 30);
         var end = new Date(b.maxEnd); end.setSeconds(end.getSeconds() + 30);
-        speedCalls.push(['Get', { typeName: 'StatusData', search: {
-          deviceSearch: { id: did }, diagnosticSearch: { id: speedDiag },
-          fromDate: start.toISOString(), toDate: end.toISOString(), resultsLimit: STATUSDATA_RESULTS_LIMIT
-        }}]);
-        limitCalls.push(['Get', { typeName: 'StatusData', search: {
+        speedCalls.push(['Get', { typeName: 'LogRecord', search: {
           deviceSearch: { id: did },
-          diagnosticSearch: { id: 'DiagnosticPostedRoadSpeedId' },
-          fromDate: start.toISOString(), toDate: end.toISOString(),
-          resultsLimit: STATUSDATA_RESULTS_LIMIT
-        }}]);
+          fromDate: start.toISOString(), toDate: end.toISOString()
+        }, resultsLimit: STATUSDATA_RESULTS_LIMIT }]);
+        limitCalls.push(['GetPostedRoadSpeedsForDevice', {
+          deviceSearch: { id: did },
+          fromDate: start.toISOString(),
+          toDate: end.toISOString(),
+          postedRoadSpeedOptions: 'NoCommercial,NoEstimates'
+        }]);
       });
 
       dbg('Fetching speed/limit for ' + deviceIdsForDetail.length + ' distinct device(s) — ' +
         (speedCalls.length + limitCalls.length) + ' API calls total (covers ' + speedingEvents.length + ' events)');
 
-      // Both vehicle speed and posted-road-speed diagnostics are standard
-      // StatusData reads, so they can be fetched in bounded multiCall batches.
+      // GPS logs are safe in multiCall. Run the specialised posted-road-speed
+      // service directly in bounded batches because large mixed multiCalls can stall.
       return Promise.all([
         runThrottled(speedCalls),
-        runThrottled(limitCalls)
+        runDirectBatches(limitCalls, 8)
       ]).then(function (resultSets) {
         var speedResults = resultSets[0] || [];
         var limitResults = resultSets[1] || [];
@@ -562,7 +562,8 @@
             var maxSpeed = 0;
             speeds.forEach(function (s) {
               var t = new Date(s.dateTime).getTime();
-              if (t >= winStart && t <= winEnd && s.data > maxSpeed) maxSpeed = s.data;
+              var observedSpeed = Number(s.speed != null ? s.speed : s.data);
+              if (t >= winStart && t <= winEnd && observedSpeed > maxSpeed) maxSpeed = observedSpeed;
             });
 
             var detailLimit = ex.details && (
