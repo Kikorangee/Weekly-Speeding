@@ -503,7 +503,7 @@
         var limit = Number(details.speedLimit || details.SpeedLimit ||
           details.postedSpeedLimit || details.roadSpeedLimit || 0);
         if (maxSpeed > agg.maxSpeed) agg.maxSpeed = maxSpeed;
-        if (limit > 0) {
+        if (isValidNzPostedLimit(limit)) {
           agg.speedLimits.push(Math.round(limit));
           if (maxSpeed > 0) agg.overLimitVals.push(maxSpeed - limit);
         }
@@ -597,7 +597,7 @@
             agg.events += 1;
             agg.totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
             if (maxSpeed > agg.maxSpeed) agg.maxSpeed = maxSpeed;
-            if (limit != null && limit > 0) {
+            if (isValidNzPostedLimit(limit)) {
               agg.speedLimits.push(Math.round(limit));
               if (maxSpeed > 0) agg.overLimitVals.push(maxSpeed - limit);
             }
@@ -620,6 +620,10 @@
       });
     }
 
+    function isValidNzPostedLimit(value) {
+      return [30, 40, 50, 60, 70, 80, 90, 100, 110].indexOf(Math.round(Number(value))) !== -1;
+    }
+
     function postedLimitAt(roadSpeeds, eventTime, eventWindowEnd) {
       var before = null;
       var after = null;
@@ -632,7 +636,7 @@
           (row.data != null ? Number(row.data) : null))));
         var timeValue = row.date || row.Date || row.dateTime || row.DateTime;
         var time = timeValue ? new Date(timeValue).getTime() : NaN;
-        if (!(value > 0) || isNaN(time)) return;
+        if (!isValidNzPostedLimit(value) || isNaN(time)) return;
 
         if (time <= eventTime && (!before || time > before.time)) {
           before = { time: time, value: value };
