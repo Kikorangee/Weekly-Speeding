@@ -263,25 +263,6 @@
       return chain.then(function () { return output; });
     }
 
-    // Geotab recommends MultiCall for road-speed requests. Keep each request
-    // group small, but run the groups in parallel so a fleet-wide lookup does
-    // not take several minutes.
-    function runParallelMultiCallBatches(calls, batchSize) {
-      var batches = [];
-      for (var i = 0; i < calls.length; i += batchSize) {
-        batches.push({ start: i, calls: calls.slice(i, i + batchSize) });
-      }
-      var output = new Array(calls.length);
-      return Promise.all(batches.map(function (batch, index) {
-        dbg('Fetching posted speed limits — SDK batch ' + (index + 1) + '/' + batches.length);
-        return apiMultiCall(batch.calls).then(function (results) {
-          (results || []).forEach(function (result, offset) {
-            output[batch.start + offset] = result || [];
-          });
-        });
-      })).then(function () { return output; });
-    }
-
     // Run an array of [method, params] calls in throttled batches, sequentially.
     function runThrottled(calls) {
       var batches = [];
@@ -558,14 +539,18 @@
       dbg('Fetching speed/limit for ' + deviceIdsForDetail.length + ' distinct device(s) — ' +
         (speedCalls.length + limitCalls.length) + ' API calls total (covers ' + speedingEvents.length + ' events)');
 
-      // GPS logs are safe in multiCall. Run the specialised posted-road-speed
-      // service directly in bounded batches because large mixed multiCalls can stall.
+      // GPS logs are safe in multiCall. GetPostedRoadSpeedsForDevice is not a
+      // standard CRUD method and does not run reliably inside multiCall (it
+      // silently returns nothing rather than erroring), so it must be called
+      // directly, one request per device, in bounded batches.
       return Promise.all([
         runThrottled(speedCalls),
-        runParallelMultiCallBatches(limitCalls, 5)
+        runDirectBatches(limitCalls, 5)
       ]).then(function (resultSets) {
         var speedResults = resultSets[0] || [];
         var limitResults = resultSets[1] || [];
+        var limitHits = limitResults.reduce(function (n, r) { return n + (r && r.length ? r.length : 0); }, 0);
+        dbg('Posted road speed lookups returned ' + limitHits + ' entries across ' + limitResults.length + ' device(s)');
         var perDevice = {};
 
         deviceIdsForDetail.forEach(function (did, i) {
