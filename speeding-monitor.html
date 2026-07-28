@@ -155,6 +155,7 @@
     var speedingRules = [];      // [{id, name}]
     var selectedRuleIds = null;  // Set, chosen via the rule picker
     var rulesLoadedOnce = false;
+    var activeLoadToken = 0;
 
     // ---------- low-level helpers ----------
 
@@ -250,7 +251,7 @@
       for (var start = 0; start < requests.length; start += batchSize) {
         (function (batchStart, batchIndex) {
           chain = chain.then(function () {
-            setStatus('Fetching posted speed limits — batch ' + (batchIndex + 1) + '/' + total + '…');
+            dbg('Fetching posted speed limits — batch ' + (batchIndex + 1) + '/' + total);
             return Promise.all(requests.slice(batchStart, batchStart + batchSize).map(function (req, offset) {
               return apiDirect(req[0], req[1]).then(function (result) {
                 output[batchStart + offset] = result;
@@ -270,7 +271,7 @@
       var chain = Promise.resolve();
       batches.forEach(function (batch, idx) {
         chain = chain.then(function () {
-          setStatus('Fetching speed detail — batch ' + (idx + 1) + '/' + batches.length + '…');
+          dbg('Fetching API batch ' + (idx + 1) + '/' + batches.length);
           return apiMultiCall(batch);
         }).then(function (r) {
           allResults = allResults.concat(r);
@@ -363,6 +364,7 @@
 
     function loadData() {
       if (isLoading) { dbg('loadData() already running — ignoring duplicate call'); return; }
+      var loadToken = ++activeLoadToken;
       isLoading = true;
       setButtonsEnabled(false);
 
@@ -422,11 +424,38 @@
             return;
           }
 
-          return fetchSpeedDetailByDevice(speedingEvents, speedDiag).then(function (perDevice) {
+          // Render the exception report immediately. Posted-road-speed data is an
+          // optional enrichment and must never hold the dashboard hostage.
+          var basePerDevice = summarizeExceptionsOnly(speedingEvents);
+          renderTable(devices, groupMap, basePerDevice);
+          setStatus(speedingEvents.length + ' speeding event(s) loaded. Fetching speed details in the background…');
+
+          isLoading = false;
+          setButtonsEnabled(true);
+
+          var enrichmentTimeout = new Promise(function (resolve) {
+            setTimeout(function () { resolve(null); }, 30000);
+          });
+          Promise.race([
+            fetchSpeedDetailByDevice(speedingEvents, speedDiag),
+            enrichmentTimeout
+          ]).then(function (perDevice) {
+            if (loadToken !== activeLoadToken) return;
+            if (!perDevice) {
+              dbg('Speed-detail enrichment stopped after 30s; exception report remains usable.');
+              setStatus(speedingEvents.length + ' speeding event(s) loaded. Some posted limits were unavailable.');
+              return;
+            }
             renderTable(devices, groupMap, perDevice);
             setStatus(speedingEvents.length + ' speeding event(s) across ' + Object.keys(perDevice).length +
               ' vehicle(s) in the last ' + days + ' days.');
+          }).catch(function (err) {
+            dbg('Speed-detail enrichment ERROR: ' + (err && err.message ? err.message : JSON.stringify(err)));
+            if (loadToken === activeLoadToken) {
+              setStatus(speedingEvents.length + ' speeding event(s) loaded. Speed-limit enrichment was unavailable.');
+            }
           });
+          return null;
         });
       }).catch(function (err) {
         dbg('FATAL: ' + (err && err.message ? err.message : JSON.stringify(err)));
@@ -437,6 +466,30 @@
         isLoading = false;
         setButtonsEnabled(true);
       });
+    }
+
+    function summarizeExceptionsOnly(speedingEvents) {
+      var perDevice = {};
+      speedingEvents.forEach(function (ex) {
+        var did = ex.device.id;
+        if (!perDevice[did]) {
+          perDevice[did] = { events: 0, totalMinutes: 0, maxSpeed: 0, overLimitVals: [], speedLimits: [] };
+        }
+        var agg = perDevice[did];
+        agg.events += 1;
+        agg.totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
+
+        var details = ex.details || {};
+        var maxSpeed = Number(details.maxSpeed || details.MaxSpeed || 0);
+        var limit = Number(details.speedLimit || details.SpeedLimit ||
+          details.postedSpeedLimit || details.roadSpeedLimit || 0);
+        if (maxSpeed > agg.maxSpeed) agg.maxSpeed = maxSpeed;
+        if (limit > 0) {
+          agg.speedLimits.push(Math.round(limit));
+          if (maxSpeed > 0) agg.overLimitVals.push(maxSpeed - limit);
+        }
+      });
+      return perDevice;
     }
 
     // One StatusData pair (speed + posted limit) per DEVICE — not per event — spanning that
