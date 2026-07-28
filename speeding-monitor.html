@@ -263,6 +263,25 @@
       return chain.then(function () { return output; });
     }
 
+    // Geotab recommends MultiCall for road-speed requests. Keep each request
+    // group small, but run the groups in parallel so a fleet-wide lookup does
+    // not take several minutes.
+    function runParallelMultiCallBatches(calls, batchSize) {
+      var batches = [];
+      for (var i = 0; i < calls.length; i += batchSize) {
+        batches.push({ start: i, calls: calls.slice(i, i + batchSize) });
+      }
+      var output = new Array(calls.length);
+      return Promise.all(batches.map(function (batch, index) {
+        dbg('Fetching posted speed limits — SDK batch ' + (index + 1) + '/' + batches.length);
+        return apiMultiCall(batch.calls).then(function (results) {
+          (results || []).forEach(function (result, offset) {
+            output[batch.start + offset] = result || [];
+          });
+        });
+      })).then(function () { return output; });
+    }
+
     // Run an array of [method, params] calls in throttled batches, sequentially.
     function runThrottled(calls) {
       var batches = [];
@@ -543,7 +562,7 @@
       // service directly in bounded batches because large mixed multiCalls can stall.
       return Promise.all([
         runThrottled(speedCalls),
-        runDirectBatches(limitCalls, 8)
+        runParallelMultiCallBatches(limitCalls, 5)
       ]).then(function (resultSets) {
         var speedResults = resultSets[0] || [];
         var limitResults = resultSets[1] || [];
