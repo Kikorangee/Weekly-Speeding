@@ -433,23 +433,23 @@
           isLoading = false;
           setButtonsEnabled(true);
 
-          var enrichmentTimeout = new Promise(function (resolve) {
-            setTimeout(function () { resolve(null); }, 30000);
-          });
-          Promise.race([
-            fetchSpeedDetailByDevice(speedingEvents, speedDiag),
-            enrichmentTimeout
-          ]).then(function (perDevice) {
+          var slowEnrichmentNotice = setTimeout(function () {
             if (loadToken !== activeLoadToken) return;
-            if (!perDevice) {
-              dbg('Speed-detail enrichment stopped after 30s; exception report remains usable.');
-              setStatus(speedingEvents.length + ' speeding event(s) loaded. Some posted limits were unavailable.');
-              return;
-            }
+            setStatus(speedingEvents.length +
+              ' speeding event(s) loaded. Still fetching Max Speed and Speed Limit data…');
+          }, 30000);
+
+          // Do not discard valid results merely because the fleet-wide lookup
+          // takes longer than 30 seconds. The base table and controls remain
+          // usable while this promise completes in the background.
+          fetchSpeedDetailByDevice(speedingEvents, speedDiag).then(function (perDevice) {
+            clearTimeout(slowEnrichmentNotice);
+            if (loadToken !== activeLoadToken) return;
             renderTable(devices, groupMap, perDevice);
             setStatus(speedingEvents.length + ' speeding event(s) across ' + Object.keys(perDevice).length +
               ' vehicle(s) in the last ' + days + ' days.');
           }).catch(function (err) {
+            clearTimeout(slowEnrichmentNotice);
             dbg('Speed-detail enrichment ERROR: ' + (err && err.message ? err.message : JSON.stringify(err)));
             if (loadToken === activeLoadToken) {
               setStatus(speedingEvents.length + ' speeding event(s) loaded. Speed-limit enrichment was unavailable.');
