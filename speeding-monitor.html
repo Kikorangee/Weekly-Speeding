@@ -52,7 +52,10 @@
 
   <div id="cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px;"></div>
 
-  <div id="statusText" style="color:#68788d;font-size:13px;margin-bottom:10px;"></div>
+  <div id="statusText" style="color:#68788d;font-size:13px;margin-bottom:6px;"></div>
+  <div id="progressWrap" style="display:none;margin-bottom:10px;background:#e2e6ea;border-radius:4px;overflow:hidden;height:8px;">
+    <div id="progressBar" style="background:#2d6cdf;height:100%;width:0%;transition:width 0.2s ease;"></div>
+  </div>
 
   <div id="summaryWrap" style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);overflow:hidden;margin-bottom:16px;display:none;">
     <div style="padding:12px 16px;border-bottom:1px solid #eef1f4;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
@@ -248,7 +251,7 @@
       });
     }
 
-    function runDirectBatches(requests, batchSize) {
+    function runDirectBatches(requests, batchSize, onProgress) {
       var output = new Array(requests.length);
       var chain = Promise.resolve();
       var total = Math.ceil(requests.length / batchSize);
@@ -259,6 +262,7 @@
             return Promise.all(requests.slice(batchStart, batchStart + batchSize).map(function (req, offset) {
               return apiDirect(req[0], req[1]).then(function (result) {
                 output[batchStart + offset] = result;
+                if (onProgress) onProgress(1);
               });
             }));
           });
@@ -268,7 +272,7 @@
     }
 
     // Run an array of [method, params] calls in throttled batches, sequentially.
-    function runThrottled(calls) {
+    function runThrottled(calls, onProgress) {
       var batches = [];
       for (var i = 0; i < calls.length; i += BATCH_SIZE) batches.push(calls.slice(i, i + BATCH_SIZE));
       var allResults = [];
@@ -279,6 +283,7 @@
           return apiMultiCall(batch);
         }).then(function (r) {
           allResults = allResults.concat(r);
+          if (onProgress) onProgress(batch.length);
           if (idx < batches.length - 1) {
             return new Promise(function (res) { setTimeout(res, BATCH_DELAY_MS); });
           }
@@ -328,6 +333,20 @@
     }
 
     function setStatus(msg) { document.getElementById('statusText').textContent = msg; }
+
+    function showProgress() {
+      var wrap = document.getElementById('progressWrap');
+      if (wrap) wrap.style.display = 'block';
+      setProgress(0);
+    }
+    function setProgress(fraction) {
+      var bar = document.getElementById('progressBar');
+      if (bar) bar.style.width = (Math.max(0, Math.min(1, fraction)) * 100) + '%';
+    }
+    function hideProgress() {
+      var wrap = document.getElementById('progressWrap');
+      if (wrap) wrap.style.display = 'none';
+    }
 
     // ---------- step 1: load rule list & show picker ----------
 
@@ -383,6 +402,7 @@
         '<tr><td colspan="10" style="padding:24px;text-align:center;color:#68788d;">Loading…</td></tr>';
       document.getElementById('cards').innerHTML = '';
       setStatus('Loading…');
+      hideProgress();
 
       var rulesPromise = rulesLoadedOnce ? Promise.resolve() : loadRulesAndShowPicker();
 
@@ -449,6 +469,7 @@
           fetchSpeedDetailByDevice(speedingEvents, speedDiag).then(function (perDevice) {
             clearTimeout(slowEnrichmentNotice);
             if (loadToken !== activeLoadToken) return;
+            hideProgress();
             renderTable(devices, groupMap, perDevice);
             setStatus(speedingEvents.length + ' speeding event(s) across ' + Object.keys(perDevice).length +
               ' vehicle(s) in the last ' + days + ' days.');
@@ -456,6 +477,7 @@
             clearTimeout(slowEnrichmentNotice);
             dbg('Speed-detail enrichment ERROR: ' + (err && err.message ? err.message : JSON.stringify(err)));
             if (loadToken === activeLoadToken) {
+              hideProgress();
               setStatus(speedingEvents.length + ' speeding event(s) loaded. Speed-limit enrichment was unavailable.');
             }
           });
@@ -543,13 +565,21 @@
       dbg('Fetching speed/limit for ' + deviceIdsForDetail.length + ' distinct device(s) — ' +
         (speedCalls.length + limitCalls.length) + ' API calls total (covers ' + speedingEvents.length + ' events)');
 
+      var totalCalls = speedCalls.length + limitCalls.length;
+      var completedCalls = 0;
+      showProgress();
+      function bumpProgress(n) {
+        completedCalls += n;
+        setProgress(totalCalls > 0 ? completedCalls / totalCalls : 1);
+      }
+
       // GPS logs are safe in multiCall. GetPostedRoadSpeedsForDevice is not a
       // standard CRUD method and does not run reliably inside multiCall (it
       // silently returns nothing rather than erroring), so it must be called
       // directly, one request per device, in bounded batches.
       return Promise.all([
-        runThrottled(speedCalls),
-        runDirectBatches(limitCalls, 12)
+        runThrottled(speedCalls, bumpProgress),
+        runDirectBatches(limitCalls, 12, bumpProgress)
       ]).then(function (resultSets) {
         var speedResults = resultSets[0] || [];
         var limitResults = resultSets[1] || [];
