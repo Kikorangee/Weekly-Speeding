@@ -1,0 +1,1419 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Speeding Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body>
+
+<div id="app" style="font-family:'Segoe UI',Arial,sans-serif;background:#f4f6f8;min-height:100vh;padding:20px;box-sizing:border-box;">
+
+  <div id="header" style="background:#fff;border-radius:8px;padding:16px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:16px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;">
+    <div>
+      <h2 style="margin:0;color:#1a2b3c;font-size:20px;">🚨 Speeding Monitor</h2>
+      <div id="dateRangeLabel" style="color:#68788d;font-size:13px;margin-top:4px;">Loading…</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <label style="font-size:13px;color:#4a5568;">Period:
+        <select id="daysSelect" style="margin-left:6px;padding:5px 8px;border-radius:4px;border:1px solid #ccd3db;">
+          <option value="7" selected>Previous 7 days</option>
+          <option value="14">Previous 14 days</option>
+          <option value="30">Previous 30 days</option>
+        </select>
+      </label>
+      <label style="font-size:13px;color:#4a5568;">
+        <input type="checkbox" id="showAllToggle"> Show all vehicles
+      </label>
+      <button id="exportBtn" style="background:#2d6cdf;color:#fff;border:none;padding:7px 14px;border-radius:4px;cursor:pointer;font-size:13px;">⬇ Export XLSX</button>
+      <button id="downloadPdfBtn" style="background:#0b7a3b;color:#fff;border:2px solid #08592b;padding:7px 16px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:700;">⬇ DOWNLOAD PDF</button>
+      <button id="refreshBtn" style="background:#e74c3c;color:#fff;border:none;padding:7px 14px;border-radius:4px;cursor:pointer;font-size:13px;">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div id="debugWrap" style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);overflow:hidden;margin-bottom:16px;">
+    <div style="padding:10px 16px;border-bottom:1px solid #eef1f4;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:13px;font-weight:700;color:#1a2b3c;">📋 Live Progress</span>
+        <span id="debugStatusDot" style="width:7px;height:7px;border-radius:50%;background:#9aa5b1;display:inline-block;"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <button onclick="document.getElementById('debugLogBody').innerHTML='';" style="background:none;border:none;color:#8a97a8;font-size:12px;cursor:pointer;padding:2px 4px;">Clear</button>
+        <button id="debugToggleBtn" onclick="var b=document.getElementById('debugLogBody');var open=b.style.display!=='none';b.style.display=open?'none':'block';this.textContent=open?'Show \u25be':'Hide \u25b4';" style="background:none;border:none;color:#2d6cdf;font-size:12px;font-weight:600;cursor:pointer;padding:2px 4px;">Hide ▴</button>
+      </div>
+    </div>
+    <div id="debugLogBody" style="display:block;max-height:220px;overflow-y:auto;font-size:12px;"></div>
+  </div>
+
+  <div id="rulePickerWrap" style="background:#fff;border-radius:8px;padding:14px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:16px;display:none;">
+    <div style="font-size:13px;color:#1a2b3c;font-weight:600;margin-bottom:8px;">
+      Speeding rules to include
+      <span style="font-weight:400;color:#68788d;">— untick any that aren't relevant. Fewer rules = fewer API calls and a faster, more accurate table.</span>
+    </div>
+    <div id="ruleList" style="display:flex;flex-wrap:wrap;gap:8px 20px;font-size:13px;color:#4a5568;"></div>
+    <button id="applyRulesBtn" style="margin-top:10px;background:#1a2b3c;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px;">Apply &amp; Load</button>
+  </div>
+
+  <div id="cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px;"></div>
+
+  <div id="statusText" style="color:#68788d;font-size:13px;margin-bottom:10px;"></div>
+
+  <div id="summaryWrap" style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);overflow:hidden;margin-bottom:16px;display:none;">
+    <div style="padding:12px 16px;border-bottom:1px solid #eef1f4;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <div>
+        <div id="summaryTitle" style="font-size:15px;font-weight:700;color:#1a2b3c;">⭐ Recommend Managers Act</div>
+        <div id="summarySubtitle" style="font-size:12px;color:#68788d;margin-top:2px;"></div>
+      </div>
+      <button id="summaryToggleBtn" onclick="var b=document.getElementById('summaryBody');var open=b.style.display!=='none';b.style.display=open?'none':'block';this.textContent=open?'Show \u25be':'Hide \u25b4';" style="background:#f4f6f8;color:#1a2b3c;border:1px solid #dfe4ea;font-size:12px;font-weight:600;cursor:pointer;padding:5px 12px;border-radius:4px;">Show ▾</button>
+    </div>
+    <div id="summaryBody" style="display:none;">
+      <div style="overflow-x:auto;">
+        <table id="summaryTable" style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#c0392b;color:#fff;">
+              <th style="padding:9px 12px;text-align:left;">Fleet</th>
+              <th style="padding:9px 12px;text-align:left;">Vehicle</th>
+              <th style="padding:9px 12px;text-align:center;">Flags</th>
+              <th style="padding:9px 12px;text-align:left;">Flagged For</th>
+              <th style="padding:9px 12px;text-align:right;">Events</th>
+              <th style="padding:9px 12px;text-align:right;">Total Time (Mins)</th>
+              <th style="padding:9px 12px;text-align:right;">Worst Over Limit</th>
+              <th style="padding:9px 12px;text-align:right;">Max Speed</th>
+              <th style="padding:9px 12px;text-align:left;">Max Speed Date/Time</th>
+              <th style="padding:9px 12px;text-align:left;">Location</th>
+              <th style="padding:9px 12px;text-align:right;">Speed Limit(s) Triggered</th>
+              <th style="padding:9px 12px;text-align:right;">Avg Over Limit</th>
+            </tr>
+          </thead>
+          <tbody id="summaryTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="topPctWrap" style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);overflow:hidden;margin-bottom:16px;display:none;">
+    <div style="padding:12px 16px;border-bottom:1px solid #eef1f4;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <div>
+        <div id="topPctTitle" style="font-size:15px;font-weight:700;color:#1a2b3c;">🏆 Top 10% by Total Time (Mins) Speeding</div>
+        <div id="topPctSubtitle" style="font-size:12px;color:#68788d;margin-top:2px;"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button id="downloadTopPctPdfBtn" style="background:#0b7a3b;color:#fff;border:2px solid #08592b;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:700;">⬇ DOWNLOAD PDF</button>
+        <button id="topPctToggleBtn" onclick="var b=document.getElementById('topPctBody');var open=b.style.display!=='none';b.style.display=open?'none':'block';this.textContent=open?'Show \u25be':'Hide \u25b4';" style="background:#f4f6f8;color:#1a2b3c;border:1px solid #dfe4ea;font-size:12px;font-weight:600;cursor:pointer;padding:5px 12px;border-radius:4px;">Show ▾</button>
+      </div>
+    </div>
+    <div id="topPctBody" style="display:none;">
+      <div style="padding:9px 16px;border-bottom:1px solid #eef1f4;font-size:11.5px;color:#68788d;">
+        Red shading equals Top 10% for that measure.
+        &nbsp;&nbsp;<span style="background:#fff3cd;padding:1px 6px;border-radius:3px;">!</span> = Total Time 30&ndash;59&nbsp;min, or Max Speed 120&ndash;129.9&nbsp;km/h.
+        &nbsp;&nbsp;<span style="background:#f8d7da;padding:1px 6px;border-radius:3px;">✕</span> = Total Time 60+&nbsp;min, or Max Speed 130+&nbsp;km/h.
+      </div>
+      <div style="overflow-x:auto;">
+        <table id="topPctTable" style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#8a5c00;color:#fff;">
+              <th style="padding:9px 12px;text-align:left;">Fleet</th>
+              <th style="padding:9px 12px;text-align:left;">Vehicle</th>
+              <th style="padding:9px 12px;text-align:center;">Flags</th>
+              <th style="padding:9px 12px;text-align:right;">Number of Events</th>
+              <th style="padding:9px 12px;text-align:right;">Total Time (Mins) Speeding</th>
+              <th style="padding:9px 12px;text-align:right;">Max of Max Speed (km/h)</th>
+              <th style="padding:9px 12px;text-align:left;">Max Speed Date/Time</th>
+              <th style="padding:9px 12px;text-align:left;">Location</th>
+              <th style="padding:9px 12px;text-align:right;">Speed Limit(s) Triggered (km/h)</th>
+              <th style="padding:9px 12px;text-align:right;">Average of Speed Over Limit</th>
+            </tr>
+          </thead>
+          <tbody id="topPctTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="mainReportWrap" style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);overflow:hidden;">
+    <div style="padding:12px 16px;border-bottom:1px solid #eef1f4;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <div style="font-size:15px;font-weight:700;color:#1a2b3c;">🚦 All Vehicles — Full Report</div>
+      <button id="mainReportToggleBtn" onclick="var b=document.getElementById('mainReportBody');var open=b.style.display!=='none';b.style.display=open?'none':'block';this.textContent=open?'Show \u25be':'Hide \u25b4';" style="background:#f4f6f8;color:#1a2b3c;border:1px solid #dfe4ea;font-size:12px;font-weight:600;cursor:pointer;padding:5px 12px;border-radius:4px;">Show ▾</button>
+    </div>
+    <div id="mainReportBody" style="display:none;">
+      <div style="padding:12px 16px;border-bottom:1px solid #eef1f4;font-size:12px;color:#68788d;line-height:1.5;">
+        <strong>Recommend action on cases marked below.</strong>
+        Red shading highlights the highest values in each column, for scanning only &mdash;
+        the flags below are what decide whether a vehicle needs action.
+        &nbsp;&nbsp;<span style="background:#fff3cd;padding:1px 6px;border-radius:3px;">!</span> = 30&ndash;59&nbsp;min speeding, or 20&ndash;29&nbsp;km/h over the posted limit.
+        &nbsp;&nbsp;<span style="background:#f8d7da;padding:1px 6px;border-radius:3px;">✕</span> = 60+&nbsp;min speeding, or 30+&nbsp;km/h over the posted limit.
+      </div>
+      <div style="overflow-x:auto;">
+        <table id="speedTable" style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#1a2b3c;color:#fff;">
+              <th style="padding:10px 12px;text-align:left;">Fleet</th>
+              <th style="padding:10px 12px;text-align:left;">Vehicle</th>
+              <th style="padding:10px 12px;text-align:center;">Flags</th>
+              <th style="padding:10px 12px;text-align:right;">Number of Events</th>
+              <th style="padding:10px 12px;text-align:right;">Total Time (Mins) Speeding</th>
+              <th style="padding:10px 12px;text-align:right;">Worst Over Limit (km/h)</th>
+              <th style="padding:10px 12px;text-align:right;">Max Speed (km/h)</th>
+              <th style="padding:10px 12px;text-align:left;">Max Speed Date/Time</th>
+              <th style="padding:10px 12px;text-align:left;">Location</th>
+              <th style="padding:10px 12px;text-align:right;">Speed Limit(s) Triggered (km/h)</th>
+              <th style="padding:10px 12px;text-align:right;">Avg Speed Over Limit</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr><td colspan="11" style="padding:24px;text-align:center;color:#68788d;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+
+  function dbg(msg) {
+    var body = document.getElementById('debugLogBody');
+    if (body) {
+      var now = new Date();
+      var ts = String(now.getHours()).padStart(2, '0') + ':' +
+               String(now.getMinutes()).padStart(2, '0') + ':' +
+               String(now.getSeconds()).padStart(2, '0') + '.' +
+               String(now.getMilliseconds()).padStart(3, '0');
+
+      var isError = /ERROR|FATAL/i.test(msg);
+      var isWarn = /rate limit|retry|timed out|WARN/i.test(msg);
+      var accent = isError ? '#e74c3c' : (isWarn ? '#dba617' : '#dfe4ea');
+      var textColor = isError ? '#c0392b' : (isWarn ? '#8a6300' : '#37474f');
+
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:10px;align-items:baseline;padding:5px 16px;border-left:3px solid ' +
+        accent + ';border-bottom:1px solid #f2f4f6;';
+      row.innerHTML =
+        '<span style="color:#9aa5b1;font-size:11px;flex-shrink:0;min-width:74px;">' + ts + '</span>' +
+        '<span style="color:' + textColor + ';line-height:1.4;word-break:break-word;">' + escapeHtml(msg) + '</span>';
+      body.appendChild(row);
+      body.scrollTop = body.scrollHeight;
+
+      var dot = document.getElementById('debugStatusDot');
+      if (dot) dot.style.background = isError ? '#e74c3c' : (isWarn ? '#dba617' : '#2ecc71');
+    }
+    console.log('[speeding-monitor] ' + msg);
+  }
+
+  var RESERVED_GROUP_IDS = {
+    GroupCompanyId: true, GroupEverythingId: true, GroupDriverGroupsId: true,
+    GroupDriverId: true, GroupFuelAndEnergyId: true, GroupPrivateId: true,
+    GroupZoneClusterId: true, GroupZoneTypeObjectId: true, GroupSecurityId: true,
+    GroupTMPLId: true, GroupOrganizationId: true, GroupPassengerId: true,
+    GroupAllVehiclesId: true, GroupNoAccessId: true
+  };
+
+  // Safety limits to stay well under MyGeotab's per-minute API quota.
+  var MAX_DEVICES_FOR_SPEED_DETAIL = 250; // worst-offender devices get real Max Speed/Over-Limit numbers
+  var STATUSDATA_RESULTS_LIMIT = 15000;   // cap payload size per call
+  var BATCH_SIZE = 40;                    // calls per multiCall batch
+  var BATCH_DELAY_MS = 400;               // pause between batches
+  var MAX_RETRIES = 4;
+
+  // A "top 10%" needs at least ten vehicles to mean anything. Below this the
+  // 90th percentile collapses onto the single highest value, so the decile
+  // modes are disabled rather than reported as if they were a real ranking.
+  var MIN_POPULATION_FOR_DECILE = 10;
+
+  // Action thresholds. Severity is measured as km/h OVER the posted limit, not
+  // absolute speed: 90 in a 30 zone (60 over) is worse than 130 on the open
+  // road (30 over). Change these numbers here — nothing else hard-codes them.
+  var OVER_LIMIT_CRITICAL = 30;   // km/h over posted  -> X
+  var OVER_LIMIT_WATCH    = 20;   // km/h over posted  -> !
+  var MINUTES_CRITICAL    = 60;   // total minutes speeding -> X
+  var MINUTES_WATCH       = 30;   // total minutes speeding -> !
+
+  // Icon thresholds for the Top 10% (single-measure) report, which flags on
+  // absolute Total Time or absolute Max Speed rather than km/h-over-limit.
+  // Matches the "speeding-top10pct" spreadsheet's icon key.
+  var TOPPCT_MAX_SPEED_CRITICAL = 130;  // km/h -> X
+  var TOPPCT_MAX_SPEED_WATCH    = 120;  // km/h -> !
+
+  geotab.addin["speeding-monitor"] = function () {
+    var apiRef = null;
+    var isLoading = false;
+    var lastRows = [];
+    var lastSummaryRows = [];
+    var lastTopPctRows = [];     // rows for the Top 10% by Total Time report
+    var lastPercentiles = null;  // top-10% thresholds per measure, shared with the PDF report
+    var lastRangeLabel = '';
+    var sessionInfo = null;
+    var speedingRules = [];      // [{id, name}]
+    var selectedRuleIds = null;  // Set, chosen via the rule picker
+    var rulesLoadedOnce = false;
+    var activeLoadToken = 0;
+
+    // ---------- low-level helpers ----------
+
+    function apiGet(typeName, search) {
+      return new Promise(function (resolve, reject) {
+        apiRef.call('Get', { typeName: typeName, search: search || {} }, function (result) {
+          dbg('Get ' + typeName + ' → ' + (result ? result.length : 0) + ' records');
+          resolve(result || []);
+        }, function (err) {
+          dbg('Get ' + typeName + ' ERROR: ' + (err && err.message ? err.message : JSON.stringify(err)));
+          reject(err);
+        });
+      });
+    }
+
+    function isOverLimitError(err) {
+      if (!err) return false;
+      if (err.name === 'OverLimitException') return true;
+      if (err.data && err.data.type === 'OverLimitException') return true;
+      if (err.message && /quota exceeded/i.test(err.message)) return true;
+      return false;
+    }
+
+    function retryDelaySeconds(err) {
+      if (err && err.rateLimit && err.rateLimit.retryAfter) return err.rateLimit.retryAfter;
+      return 15;
+    }
+
+    // multiCall with automatic retry/backoff on rate-limit errors
+    function apiMultiCall(calls, retriesLeft) {
+      if (typeof retriesLeft === 'undefined') retriesLeft = MAX_RETRIES;
+      return new Promise(function (resolve, reject) {
+        if (calls.length === 0) { resolve([]); return; }
+        apiRef.multiCall(calls, function (results) { resolve(results || []); },
+          function (err) {
+            if (isOverLimitError(err) && retriesLeft > 0) {
+              var wait = retryDelaySeconds(err);
+              dbg('Rate limit hit — waiting ' + wait + 's before retry (' + retriesLeft + ' left)');
+              setStatus('API rate limit reached — retrying in ' + wait + 's…');
+              setTimeout(function () {
+                apiMultiCall(calls, retriesLeft - 1).then(resolve, reject);
+              }, wait * 1000);
+            } else {
+              dbg('multiCall ERROR: ' + (err && err.message ? err.message : JSON.stringify(err)));
+              reject(err);
+            }
+          });
+      });
+    }
+
+    // Some specialised Geotab methods (notably GetPostedRoadSpeedsForDevice)
+    // can stall when included inside multiCall. Run those as bounded direct
+    // calls so one slow vehicle cannot lock the whole dashboard.
+    function apiDirect(method, params, timeoutMs, retriesLeft) {
+      if (typeof timeoutMs === 'undefined') timeoutMs = 20000;
+      if (typeof retriesLeft === 'undefined') retriesLeft = 1;
+      return new Promise(function (resolve) {
+        var finished = false;
+        var timer = setTimeout(function () {
+          if (finished) return;
+          finished = true;
+          dbg(method + ' timed out after ' + Math.round(timeoutMs / 1000) + 's');
+          resolve([]);
+        }, timeoutMs);
+
+        apiRef.call(method, params, function (result) {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          resolve(result || []);
+        }, function (err) {
+          if (finished) return;
+          clearTimeout(timer);
+          if (isOverLimitError(err) && retriesLeft > 0) {
+            finished = true;
+            var wait = retryDelaySeconds(err);
+            setTimeout(function () {
+              apiDirect(method, params, timeoutMs, retriesLeft - 1).then(resolve);
+            }, wait * 1000);
+            return;
+          }
+          finished = true;
+          dbg(method + ' ERROR: ' + (err && err.message ? err.message : JSON.stringify(err)));
+          resolve([]);
+        });
+      });
+    }
+
+    function runDirectBatches(requests, batchSize) {
+      var output = new Array(requests.length);
+      var chain = Promise.resolve();
+      var total = Math.ceil(requests.length / batchSize);
+      for (var start = 0; start < requests.length; start += batchSize) {
+        (function (batchStart, batchIndex) {
+          chain = chain.then(function () {
+            dbg('Fetching posted speed limits — batch ' + (batchIndex + 1) + '/' + total);
+            return Promise.all(requests.slice(batchStart, batchStart + batchSize).map(function (req, offset) {
+              return apiDirect(req[0], req[1]).then(function (result) {
+                output[batchStart + offset] = result;
+              });
+            }));
+          });
+        })(start, Math.floor(start / batchSize));
+      }
+      return chain.then(function () { return output; });
+    }
+
+    // Geotab recommends MultiCall for road-speed requests. Keep each request
+    // group small, but run the groups in parallel so a fleet-wide lookup does
+    // not take several minutes.
+    function runParallelMultiCallBatches(calls, batchSize) {
+      var batches = [];
+      for (var i = 0; i < calls.length; i += batchSize) {
+        batches.push({ start: i, calls: calls.slice(i, i + batchSize) });
+      }
+      var output = new Array(calls.length);
+      return Promise.all(batches.map(function (batch, index) {
+        dbg('Fetching posted speed limits — SDK batch ' + (index + 1) + '/' + batches.length);
+        return apiMultiCall(batch.calls).then(function (results) {
+          (results || []).forEach(function (result, offset) {
+            output[batch.start + offset] = result || [];
+          });
+        });
+      })).then(function () { return output; });
+    }
+
+    // Run an array of [method, params] calls in throttled batches, sequentially.
+    function runThrottled(calls) {
+      var batches = [];
+      for (var i = 0; i < calls.length; i += BATCH_SIZE) batches.push(calls.slice(i, i + BATCH_SIZE));
+      var allResults = [];
+      var chain = Promise.resolve();
+      batches.forEach(function (batch, idx) {
+        chain = chain.then(function () {
+          dbg('Fetching API batch ' + (idx + 1) + '/' + batches.length);
+          return apiMultiCall(batch);
+        }).then(function (r) {
+          allResults = allResults.concat(r);
+          if (idx < batches.length - 1) {
+            return new Promise(function (res) { setTimeout(res, BATCH_DELAY_MS); });
+          }
+        });
+      });
+      return chain.then(function () { return allResults; });
+    }
+
+    function detectSpeedDiagnostic() {
+      var weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      return apiGet('StatusData', {
+        diagnosticSearch: { id: 'DiagnosticSpeedId' },
+        fromDate: weekAgo.toISOString(),
+        resultsLimit: 1
+      }).then(function (rows) {
+        var diag = rows.length > 0 ? 'DiagnosticSpeedId' : 'DiagnosticEngineRoadSpeedId';
+        dbg('Using speed diagnostic: ' + diag + (rows.length === 0 ? ' (GPS speed unavailable — falling back to engine road speed)' : ''));
+        return diag;
+      }).catch(function () {
+        return 'DiagnosticEngineRoadSpeedId';
+      });
+    }
+
+    function fleetNameForDevice(device, groupMap) {
+      if (!device.groups) return 'Unassigned';
+      for (var i = 0; i < device.groups.length; i++) {
+        var gid = device.groups[i].id;
+        if (RESERVED_GROUP_IDS[gid]) continue;
+        var g = groupMap[gid];
+        if (g && g.name) return g.name;
+      }
+      return 'Unassigned';
+    }
+
+    function minutesBetween(fromIso, toIso) {
+      if (!fromIso || !toIso) return 0;
+      var ms = new Date(toIso).getTime() - new Date(fromIso).getTime();
+      return ms > 0 ? ms / 60000 : 0;
+    }
+
+    // Nearest-rank 90th percentile. Returns Infinity (i.e. "no threshold") for
+    // populations too small to have a meaningful decile — with n < 10 this
+    // function would return the maximum value, and every >= test against it
+    // would match exactly one vehicle.
+    function percentile90(values) {
+      if (values.length < MIN_POPULATION_FOR_DECILE) return Infinity;
+      var sorted = values.slice().sort(function (a, b) { return a - b; });
+      var idx = Math.ceil(0.9 * sorted.length) - 1;
+      return sorted[Math.max(0, Math.min(idx, sorted.length - 1))];
+    }
+
+    function setStatus(msg) { document.getElementById('statusText').textContent = msg; }
+
+    // ---------- step 1: load rule list & show picker ----------
+
+    function loadRulesAndShowPicker() {
+      return apiGet('Rule', {}).then(function (rules) {
+        speedingRules = rules.filter(function (r) { return /speed/i.test(r.name || ''); });
+        dbg('Found ' + speedingRules.length + ' rule(s) matching "speed": ' +
+          speedingRules.map(function (r) { return r.name; }).join(', '));
+
+        // Sensible default: prefer the canonical posted-speeding rule if present,
+        // otherwise select everything found (user can narrow down).
+        var canonical = speedingRules.filter(function (r) { return r.id === 'RulePostedSpeedingId'; });
+        var defaultSelected = canonical.length > 0 ? canonical : speedingRules;
+        selectedRuleIds = new Set(defaultSelected.map(function (r) { return r.id; }));
+
+        renderRulePicker();
+        rulesLoadedOnce = true;
+      });
+    }
+
+    function renderRulePicker() {
+      var wrap = document.getElementById('rulePickerWrap');
+      var list = document.getElementById('ruleList');
+      if (speedingRules.length === 0) {
+        wrap.style.display = 'none';
+        return;
+      }
+      wrap.style.display = 'block';
+      list.innerHTML = speedingRules.map(function (r) {
+        var checked = selectedRuleIds.has(r.id) ? 'checked' : '';
+        return '<label style="display:flex;align-items:center;gap:5px;">' +
+          '<input type="checkbox" data-rule-id="' + escapeHtml(r.id) + '" ' + checked + '> ' +
+          escapeHtml(r.name) + '</label>';
+      }).join('');
+    }
+
+    // ---------- step 2: load exceptions + speed detail for selected rules ----------
+
+    function loadData() {
+      if (isLoading) { dbg('loadData() already running — ignoring duplicate call'); return; }
+      var loadToken = ++activeLoadToken;
+      isLoading = true;
+      setButtonsEnabled(false);
+
+      var days = parseInt(document.getElementById('daysSelect').value, 10);
+      var toDate = new Date();
+      var fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - days);
+
+      lastRangeLabel = fromDate.toLocaleString() + '  →  ' + toDate.toLocaleString() + '  (' + days + ' days)';
+      document.getElementById('dateRangeLabel').textContent = lastRangeLabel;
+      document.getElementById('tableBody').innerHTML =
+        '<tr><td colspan="11" style="padding:24px;text-align:center;color:#68788d;">Loading…</td></tr>';
+      document.getElementById('cards').innerHTML = '';
+      setStatus('Loading…');
+
+      var rulesPromise = rulesLoadedOnce ? Promise.resolve() : loadRulesAndShowPicker();
+
+      rulesPromise.then(function () {
+        var chosenRules = speedingRules.filter(function (r) { return selectedRuleIds.has(r.id); });
+
+        if (chosenRules.length === 0) {
+          isLoading = false;
+          setButtonsEnabled(true);
+          document.getElementById('tableBody').innerHTML =
+            '<tr><td colspan="11" style="padding:24px;text-align:center;color:#68788d;">No speeding rules selected.</td></tr>';
+          setStatus('Select at least one rule above, then click "Apply & Load".');
+          return;
+        }
+
+        dbg('Loading exceptions for ' + chosenRules.length + ' selected rule(s), last ' + days + ' days');
+
+        // One server-side filtered call per selected rule — far lighter than pulling every exception type.
+        var exceptionCalls = chosenRules.map(function (r) {
+          return ['Get', { typeName: 'ExceptionEvent', search: {
+            ruleSearch: { id: r.id }, fromDate: fromDate.toISOString(), toDate: toDate.toISOString()
+          }}];
+        });
+
+        return Promise.all([
+          apiGet('Device', {}),
+          apiGet('Group', {}),
+          detectSpeedDiagnostic(),
+          runThrottled(exceptionCalls)
+        ]).then(function (results) {
+          var devices = results[0], groups = results[1], speedDiag = results[2], exceptionResults = results[3];
+
+          var speedingEvents = [];
+          exceptionResults.forEach(function (rows) { speedingEvents = speedingEvents.concat(rows || []); });
+          dbg('Total speeding exceptions across selected rules: ' + speedingEvents.length);
+
+          var deviceMap = {}; devices.forEach(function (d) { deviceMap[d.id] = d; });
+          var groupMap = {}; groups.forEach(function (g) { groupMap[g.id] = g; });
+
+          if (speedingEvents.length === 0) {
+            renderTable(devices, groupMap, {});
+            setStatus('No speeding events found for the selected rule(s) in the last ' + days + ' days.');
+            return;
+          }
+
+          // Render the exception report immediately. Posted-road-speed data is an
+          // optional enrichment and its RESULTS must never hold the table hostage —
+          // but the *load guard* stays held until it settles. Releasing isLoading
+          // here (before the ~174-call enrichment fetch finishes) let a second
+          // Refresh/period-change/Apply-rules click start an entirely separate
+          // enrichment cycle on top of one still in flight, and a third, and a
+          // fourth — all competing for the same per-minute API quota and driving
+          // the rate-limit backoff up to 60s.
+          var basePerDevice = summarizeExceptionsOnly(speedingEvents);
+          renderTable(devices, groupMap, basePerDevice);
+          setStatus(speedingEvents.length + ' speeding event(s) loaded. Fetching speed details in the background…');
+
+          var slowEnrichmentNotice = setTimeout(function () {
+            if (loadToken !== activeLoadToken) return;
+            setStatus(speedingEvents.length +
+              ' speeding event(s) loaded. Still fetching Max Speed and Speed Limit data…');
+          }, 30000);
+
+          // The table itself is already usable above — only the controls that can
+          // START a new load (Refresh, period, show-all, apply-rules) stay disabled
+          // until this settles, so overlapping fetches can't stack up.
+          return fetchSpeedDetailByDevice(speedingEvents, speedDiag).then(function (perDevice) {
+            clearTimeout(slowEnrichmentNotice);
+            if (loadToken !== activeLoadToken) return;
+            renderTable(devices, groupMap, perDevice);
+            setStatus(speedingEvents.length + ' speeding event(s) across ' + Object.keys(perDevice).length +
+              ' vehicle(s) in the last ' + days + ' days.');
+          }).catch(function (err) {
+            clearTimeout(slowEnrichmentNotice);
+            dbg('Speed-detail enrichment ERROR: ' + (err && err.message ? err.message : JSON.stringify(err)));
+            if (loadToken === activeLoadToken) {
+              setStatus(speedingEvents.length + ' speeding event(s) loaded. Speed-limit enrichment was unavailable.');
+            }
+          });
+        });
+      }).catch(function (err) {
+        dbg('FATAL: ' + (err && err.message ? err.message : JSON.stringify(err)));
+        document.getElementById('tableBody').innerHTML =
+          '<tr><td colspan="11" style="padding:24px;text-align:center;color:#c0392b;">Error loading data — see debug log below.</td></tr>';
+        setStatus('Error: ' + (err && err.message ? err.message : JSON.stringify(err)));
+      }).then(function () {
+        isLoading = false;
+        setButtonsEnabled(true);
+      });
+    }
+
+    function summarizeExceptionsOnly(speedingEvents) {
+      var perDevice = {};
+      speedingEvents.forEach(function (ex) {
+        var did = ex.device.id;
+        if (!perDevice[did]) {
+          perDevice[did] = { events: 0, totalMinutes: 0, maxSpeed: 0, maxSpeedAt: null, maxSpeedLat: null, maxSpeedLon: null, maxOver: null, maxOverSpeed: null, maxOverLimit: null, maxOverAt: null, maxOverLat: null, maxOverLon: null, overLimitVals: [], speedLimits: [] };
+        }
+        var agg = perDevice[did];
+        agg.events += 1;
+        agg.totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
+
+        var details = ex.details || {};
+        var maxSpeed = Number(details.maxSpeed || details.MaxSpeed || 0);
+        var limit = Number(details.speedLimit || details.SpeedLimit ||
+          details.postedSpeedLimit || details.roadSpeedLimit || 0);
+        if (maxSpeed > agg.maxSpeed) {
+          agg.maxSpeed = maxSpeed;
+          agg.maxSpeedAt = ex.activeFrom;   // no GPS record on this path, so no coordinates
+        }
+        if (isValidNzPostedLimit(limit)) {
+          agg.speedLimits.push(Math.round(limit));
+          if (maxSpeed > 0) {
+            var over = maxSpeed - limit;
+            agg.overLimitVals.push(over);
+            if (agg.maxOver == null || over > agg.maxOver) {
+              agg.maxOver = over;
+              agg.maxOverSpeed = maxSpeed;
+              agg.maxOverLimit = limit;
+              agg.maxOverAt = ex.activeFrom;
+            }
+          }
+        }
+      });
+      return perDevice;
+    }
+
+    // One StatusData pair (speed + posted limit) per DEVICE — not per event — spanning that
+    // device's full window of speeding events. Event-level max speed / over-limit is then
+    // computed client-side by filtering to each event's own time window.
+    function fetchSpeedDetailByDevice(speedingEvents, speedDiag) {
+      var byDevice = {};
+      speedingEvents.forEach(function (ex) {
+        var did = ex.device.id;
+        if (!byDevice[did]) byDevice[did] = { events: [], minStart: null, maxEnd: null };
+        var b = byDevice[did];
+        b.events.push(ex);
+        var s = new Date(ex.activeFrom);
+        var e = new Date(ex.activeTo || ex.activeFrom);
+        if (!b.minStart || s < b.minStart) b.minStart = s;
+        if (!b.maxEnd || e > b.maxEnd) b.maxEnd = e;
+      });
+
+      var allDeviceIds = Object.keys(byDevice);
+      // Prioritize devices with the most events — they matter most for the table.
+      allDeviceIds.sort(function (a, b) { return byDevice[b].events.length - byDevice[a].events.length; });
+      var deviceIdsForDetail = allDeviceIds.slice(0, MAX_DEVICES_FOR_SPEED_DETAIL);
+
+      if (allDeviceIds.length > MAX_DEVICES_FOR_SPEED_DETAIL) {
+        dbg('Capping detailed Max Speed / Over-Limit lookups to the top ' + MAX_DEVICES_FOR_SPEED_DETAIL +
+          ' of ' + allDeviceIds.length + ' vehicles by event count. Remaining vehicles still get accurate Events/Total Time.');
+      }
+
+      var speedCalls = [];
+      var limitCalls = [];
+      deviceIdsForDetail.forEach(function (did) {
+        var b = byDevice[did];
+        var start = new Date(b.minStart); start.setSeconds(start.getSeconds() - 30);
+        var end = new Date(b.maxEnd); end.setSeconds(end.getSeconds() + 30);
+        speedCalls.push(['Get', { typeName: 'LogRecord', search: {
+          deviceSearch: { id: did },
+          fromDate: start.toISOString(), toDate: end.toISOString()
+        }, resultsLimit: STATUSDATA_RESULTS_LIMIT }]);
+        limitCalls.push(['GetPostedRoadSpeedsForDevice', {
+          deviceSearch: { id: did },
+          fromDate: start.toISOString(),
+          toDate: end.toISOString(),
+          postedRoadSpeedOptions: 'None'
+        }]);
+      });
+
+      dbg('Fetching speed/limit for ' + deviceIdsForDetail.length + ' distinct device(s) — ' +
+        (speedCalls.length + limitCalls.length) + ' API calls total (covers ' + speedingEvents.length + ' events)');
+
+      // GPS logs are safe in multiCall. Run the specialised posted-road-speed
+      // service directly in bounded batches because large mixed multiCalls can stall.
+      return Promise.all([
+        runThrottled(speedCalls),
+        runParallelMultiCallBatches(limitCalls, 5)
+      ]).then(function (resultSets) {
+        var speedResults = resultSets[0] || [];
+        var limitResults = resultSets[1] || [];
+        var perDevice = {};
+
+        deviceIdsForDetail.forEach(function (did, i) {
+          var speeds = speedResults[i] || [];
+          var limits = limitResults[i] || [];
+          var events = byDevice[did].events;
+
+          var agg = { events: 0, totalMinutes: 0, maxSpeed: 0, maxSpeedAt: null, maxSpeedLat: null, maxSpeedLon: null, maxOver: null, maxOverSpeed: null, maxOverLimit: null, maxOverAt: null, maxOverLat: null, maxOverLon: null, overLimitVals: [], speedLimits: [] };
+          events.forEach(function (ex) {
+            var winStart = new Date(ex.activeFrom).getTime() - 30000;
+            var winEnd = new Date(ex.activeTo || ex.activeFrom).getTime() + 30000;
+
+            var maxSpeed = 0;
+            var maxRec = null;
+            speeds.forEach(function (s) {
+              var t = new Date(s.dateTime).getTime();
+              var observedSpeed = Number(s.speed != null ? s.speed : s.data);
+              if (t >= winStart && t <= winEnd && observedSpeed > maxSpeed) {
+                maxSpeed = observedSpeed;
+                maxRec = s;
+              }
+            });
+
+            var detailLimit = ex.details && (
+              ex.details.speedLimit ||
+              ex.details.postedSpeedLimit ||
+              ex.details.roadSpeedLimit
+            );
+            var limit = detailLimit != null && Number(detailLimit) > 0
+              ? Number(detailLimit)
+              : postedLimitAt(limits, new Date(ex.activeFrom).getTime(), winEnd);
+
+            agg.events += 1;
+            agg.totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
+            if (maxSpeed > agg.maxSpeed) {
+              agg.maxSpeed = maxSpeed;
+              agg.maxSpeedAt = maxRec ? maxRec.dateTime : ex.activeFrom;
+              agg.maxSpeedLat = maxRec && maxRec.latitude != null ? Number(maxRec.latitude) : null;
+              agg.maxSpeedLon = maxRec && maxRec.longitude != null ? Number(maxRec.longitude) : null;
+            }
+            if (isValidNzPostedLimit(limit)) {
+              agg.speedLimits.push(Math.round(limit));
+              if (maxSpeed > 0) {
+                var over = maxSpeed - limit;
+                agg.overLimitVals.push(over);
+                if (agg.maxOver == null || over > agg.maxOver) {
+                  agg.maxOver = over;
+                  agg.maxOverSpeed = maxSpeed;
+                  agg.maxOverLimit = limit;
+                  agg.maxOverAt = maxRec ? maxRec.dateTime : ex.activeFrom;
+                  agg.maxOverLat = maxRec && maxRec.latitude != null ? Number(maxRec.latitude) : null;
+                  agg.maxOverLon = maxRec && maxRec.longitude != null ? Number(maxRec.longitude) : null;
+                }
+              }
+            }
+          });
+          perDevice[did] = agg;
+        });
+
+        // Devices beyond the detail cap: still count events/time, no speed detail.
+        allDeviceIds.slice(MAX_DEVICES_FOR_SPEED_DETAIL).forEach(function (did) {
+          var events = byDevice[did].events;
+          var agg = { events: 0, totalMinutes: 0, maxSpeed: 0, maxSpeedAt: null, maxSpeedLat: null, maxSpeedLon: null, maxOver: null, maxOverSpeed: null, maxOverLimit: null, maxOverAt: null, maxOverLat: null, maxOverLon: null, overLimitVals: [], speedLimits: [] };
+          events.forEach(function (ex) {
+            agg.events += 1;
+            agg.totalMinutes += minutesBetween(ex.activeFrom, ex.activeTo);
+          });
+          perDevice[did] = agg;
+        });
+
+        return perDevice;
+      });
+    }
+
+    function isValidNzPostedLimit(value) {
+      return [30, 40, 50, 60, 70, 80, 90, 100, 110].indexOf(Math.round(Number(value))) !== -1;
+    }
+
+    function postedLimitAt(roadSpeeds, eventTime, eventWindowEnd) {
+      var before = null;
+      var after = null;
+      (roadSpeeds || []).forEach(function (row) {
+        if (!row) return;
+        var value = row.maxSpeed != null ? Number(row.maxSpeed) :
+          (row.MaxSpeed != null ? Number(row.MaxSpeed) :
+          (row.lcvMaxSpeed != null ? Number(row.lcvMaxSpeed) :
+          (row.LcvMaxSpeed != null ? Number(row.LcvMaxSpeed) :
+          (row.data != null ? Number(row.data) : null))));
+        var timeValue = row.date || row.Date || row.dateTime || row.DateTime;
+        var time = timeValue ? new Date(timeValue).getTime() : NaN;
+        if (!isValidNzPostedLimit(value) || isNaN(time)) return;
+
+        if (time <= eventTime && (!before || time > before.time)) {
+          before = { time: time, value: value };
+        } else if (time > eventTime && time <= eventWindowEnd &&
+                   (!after || time < after.time)) {
+          after = { time: time, value: value };
+        }
+      });
+      return before ? before.value : (after ? after.value : null);
+    }
+
+    // ---------- render ----------
+
+    function renderTable(devices, groupMap, perDevice) {
+      var showAll = document.getElementById('showAllToggle').checked;
+
+      var rows = devices.map(function (d) {
+        var agg = perDevice[d.id] || { events: 0, totalMinutes: 0, maxSpeed: 0, maxSpeedAt: null, maxSpeedLat: null, maxSpeedLon: null, maxOver: null, maxOverSpeed: null, maxOverLimit: null, maxOverAt: null, maxOverLat: null, maxOverLon: null, overLimitVals: [], speedLimits: [] };
+        var avgOver = agg.overLimitVals.length > 0
+          ? agg.overLimitVals.reduce(function (a, b) { return a + b; }, 0) / agg.overLimitVals.length
+          : null;
+        var speedLimits = Array.from(new Set(agg.speedLimits || [])).sort(function (a, b) { return a - b; });
+        return {
+          fleet: fleetNameForDevice(d, groupMap),
+          vehicle: d.name,
+          events: agg.events,
+          totalMinutes: agg.totalMinutes,
+          maxSpeed: agg.maxSpeed,
+          maxSpeedAt: agg.maxSpeedAt || null,
+          maxSpeedLat: agg.maxSpeedLat != null ? agg.maxSpeedLat : null,
+          maxSpeedLon: agg.maxSpeedLon != null ? agg.maxSpeedLon : null,
+          maxOver: agg.maxOver != null ? agg.maxOver : null,
+          maxOverSpeed: agg.maxOverSpeed != null ? agg.maxOverSpeed : null,
+          maxOverLimit: agg.maxOverLimit != null ? agg.maxOverLimit : null,
+          maxOverAt: agg.maxOverAt || null,
+          maxOverLat: agg.maxOverLat != null ? agg.maxOverLat : null,
+          maxOverLon: agg.maxOverLon != null ? agg.maxOverLon : null,
+          speedLimits: speedLimits,
+          speedLimitLabel: speedLimits.length ? speedLimits.join(' / ') : 'N/A',
+          avgOver: avgOver
+        };
+      });
+
+      var filtered = showAll ? rows : rows.filter(function (r) { return r.events > 0; });
+      filtered.sort(function (a, b) {
+        if (a.fleet !== b.fleet) return a.fleet.localeCompare(b.fleet);
+        return b.totalMinutes - a.totalMinutes;
+      });
+
+      lastRows = filtered;
+
+      // The manager summary ranks vehicles with actual speeding activity.
+      // This prevents "Show all vehicles" from making zero-value vehicles
+      // qualify when the fleet has a quiet period.
+      var summaryPopulation = filtered.filter(function (r) { return r.events > 0; });
+      var pEvents = percentile90(summaryPopulation.map(function (r) { return r.events; }));
+      var pMinutes = percentile90(summaryPopulation.map(function (r) { return r.totalMinutes; }));
+      var pMaxSpeed = percentile90(summaryPopulation.filter(function (r) { return r.maxSpeed > 0; }).map(function (r) { return r.maxSpeed; }));
+      var pOver = percentile90(summaryPopulation.filter(function (r) { return r.avgOver != null; }).map(function (r) { return r.avgOver; }));
+      var pMaxOver = percentile90(summaryPopulation.filter(function (r) { return r.maxOver != null; }).map(function (r) { return r.maxOver; }));
+
+      lastPercentiles = { events: pEvents, minutes: pMinutes, maxSpeed: pMaxSpeed, over: pOver, maxOver: pMaxOver };
+
+      var totalEvents = filtered.reduce(function (s, r) { return s + r.events; }, 0);
+      var totalMinutes = filtered.reduce(function (s, r) { return s + r.totalMinutes; }, 0);
+
+      // Denominators come from the full device list, not the filtered view, so
+      // "monitored" means monitored rather than "had an event this week".
+      var monitoredCount = rows.length;
+      var fleetsCount = new Set(rows.map(function (r) { return r.fleet; })).size;
+      var withEventsCount = summaryPopulation.length;
+      var criticalCount = summaryPopulation.filter(function (r) { return flagFor(r) === '✕'; }).length;
+      var watchCount = summaryPopulation.filter(function (r) { return flagFor(r) === '!'; }).length;
+
+      var reportSet = buildReportSet(summaryPopulation);
+
+      document.getElementById('cards').innerHTML =
+        card('Total Speeding Events', totalEvents, null, withEventsCount + ' of ' + monitoredCount + ' vehicles had events') +
+        card('Total Time Speeding', totalMinutes.toFixed(1) + ' min', null, fleetsCount + ' fleet(s) monitored') +
+        card('Vehicles Requiring Action', reportSet.count, reportSet.count > 0 ? '#c0392b' : '#1a2b3c',
+             criticalCount + ' critical (\u2715) \u00b7 ' + watchCount + ' watch (!)') +
+        card('Vehicles Monitored', monitoredCount, null, withEventsCount + ' had speeding events');
+
+      if (filtered.length === 0) {
+        document.getElementById('tableBody').innerHTML =
+          '<tr><td colspan="11" style="padding:24px;text-align:center;color:#68788d;">No vehicles to display.</td></tr>';
+        document.getElementById('summaryWrap').style.display = 'none';
+        document.getElementById('topPctWrap').style.display = 'none';
+        lastSummaryRows = [];
+        lastTopPctRows = [];
+        return;
+      }
+
+      renderSummary(summaryPopulation);
+      renderTopPct(summaryPopulation);
+
+      var html = '';
+      var lastFleet = null;
+      filtered.forEach(function (r) {
+        var fleetCell;
+        if (r.fleet !== lastFleet) {
+          fleetCell = '<td style="padding:9px 12px;font-weight:600;color:#1a2b3c;border-top:2px solid #eef1f4;">' + escapeHtml(r.fleet) + '</td>';
+          lastFleet = r.fleet;
+        } else {
+          fleetCell = '<td style="padding:9px 12px;border-top:1px solid #f2f4f6;"></td>';
+        }
+
+        var flag = flagFor(r);
+        var flagBadge = flag === '✕'
+          ? '<span style="background:#f8d7da;color:#842029;padding:2px 8px;border-radius:3px;font-weight:600;">✕</span>'
+          : (flag === '!' ? '<span style="background:#fff3cd;color:#664d03;padding:2px 8px;border-radius:3px;font-weight:600;">!</span>' : '');
+
+        html += '<tr>' +
+          fleetCell +
+          '<td style="padding:9px 12px;">' + escapeHtml(r.vehicle) + '</td>' +
+          '<td style="padding:9px 12px;text-align:center;">' + flagBadge + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;' + shade(r.events, pEvents) + '">' + r.events + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;' + shade(r.totalMinutes, pMinutes) + '">' + r.totalMinutes.toFixed(2) + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;white-space:nowrap;' + (r.maxOver != null ? shade(r.maxOver, pMaxOver) : '') + '">' + escapeHtml(r.maxOver != null ? overPhrase(r) : 'N/A') + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;' + shade(r.maxSpeed, pMaxSpeed) + '">' + (r.maxSpeed > 0 ? r.maxSpeed : '—') + '</td>' +
+          '<td style="padding:9px 12px;white-space:nowrap;color:#4a5568;">' + escapeHtml(fmtMaxSpeedAtShort(r)) + '</td>' +
+          '<td style="padding:9px 12px;">' + mapLinkHtml(r) + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;">' + escapeHtml(r.speedLimitLabel) + '</td>' +
+          '<td style="padding:9px 12px;text-align:right;' + (r.avgOver != null ? shade(r.avgOver, pOver) : '') + '">' + (r.avgOver != null ? r.avgOver.toFixed(1) : 'N/A') + '</td>' +
+          '</tr>';
+      });
+      document.getElementById('tableBody').innerHTML = html;
+
+      function shade(val, threshold) {
+        return val >= threshold && threshold !== Infinity ? 'background:#fdecea;color:#842029;font-weight:600;' : '';
+      }
+    }
+
+    function flagFor(r) {
+      var over = r.maxOver;
+      if (r.totalMinutes >= MINUTES_CRITICAL || (over != null && over >= OVER_LIMIT_CRITICAL)) return '✕';
+      if (r.totalMinutes >= MINUTES_WATCH || (over != null && over >= OVER_LIMIT_WATCH)) return '!';
+      return '';
+    }
+
+    // Single source of truth for the manager report: vehicles that crossed an
+    // absolute threshold. The cards, the summary table and the PDF all read this,
+    // so the numbers cannot disagree.
+    function buildReportSet(population) {
+      var withEvents = population.filter(function (r) { return r.events > 0; });
+      var rows = [];
+
+      withEvents.forEach(function (r) {
+        var reasons = [];
+        if (r.totalMinutes >= MINUTES_CRITICAL) reasons.push('Total time ' + MINUTES_CRITICAL + '+ min');
+        else if (r.totalMinutes >= MINUTES_WATCH) reasons.push('Total time ' + MINUTES_WATCH + '-' + (MINUTES_CRITICAL - 1) + ' min');
+        if (r.maxOver != null && r.maxOver >= OVER_LIMIT_CRITICAL) reasons.push(overPhrase(r));
+        else if (r.maxOver != null && r.maxOver >= OVER_LIMIT_WATCH) reasons.push(overPhrase(r));
+        if (reasons.length === 0) return;
+
+        var copy = {};
+        for (var k in r) copy[k] = r[k];
+        copy.reasons = reasons;
+        rows.push(copy);
+      });
+
+      // Critical before watch, then worst time first.
+      rows.sort(function (a, b) {
+        var ax = flagFor(a) === '\u2715', bx = flagFor(b) === '\u2715';
+        if (ax !== bx) return ax ? -1 : 1;
+        return b.totalMinutes - a.totalMinutes;
+      });
+
+      return {
+        rows: rows,
+        count: rows.length,
+        population: withEvents.length,
+        note: rows.length + ' of ' + withEvents.length +
+              ' vehicle(s) with speeding events crossed an action threshold.'
+      };
+    }
+
+    function renderSummary(population) {
+      var set = buildReportSet(population);
+      lastSummaryRows = set.rows;
+
+      document.getElementById('summaryTitle').textContent = '\u2b50 Recommend Managers Act';
+      document.getElementById('summarySubtitle').textContent = set.note;
+      document.getElementById('summaryWrap').style.display = 'block';
+
+      if (set.rows.length === 0) {
+        document.getElementById('summaryTableBody').innerHTML =
+          '<tr><td colspan="12" style="padding:18px;text-align:center;color:#68788d;">' +
+          'No vehicles crossed an action threshold this period.</td></tr>';
+        return;
+      }
+
+      var html = '';
+      set.rows.forEach(function (r) {
+        var flag = flagFor(r);
+        var flagBadge = flag === '\u2715'
+          ? '<span style="background:#f8d7da;color:#842029;padding:2px 8px;border-radius:3px;font-weight:600;">\u2715</span>'
+          : (flag === '!' ? '<span style="background:#fff3cd;color:#664d03;padding:2px 8px;border-radius:3px;font-weight:600;">!</span>' : '');
+        var td = 'padding:8px 12px;border-top:1px solid #f2f4f6;';
+
+        html += '<tr>' +
+          '<td style="' + td + '">' + escapeHtml(r.fleet) + '</td>' +
+          '<td style="' + td + 'font-weight:600;">' + escapeHtml(r.vehicle) + '</td>' +
+          '<td style="' + td + 'text-align:center;">' + flagBadge + '</td>' +
+          '<td style="' + td + 'color:#c0392b;font-size:12px;">' + escapeHtml(r.reasons.join(', ')) + '</td>' +
+          '<td style="' + td + 'text-align:right;">' + r.events + '</td>' +
+          '<td style="' + td + 'text-align:right;">' + r.totalMinutes.toFixed(2) + '</td>' +
+          '<td style="' + td + 'text-align:right;white-space:nowrap;font-weight:600;">' + escapeHtml(r.maxOver != null ? overPhrase(r) : 'N/A') + '</td>' +
+          '<td style="' + td + 'text-align:right;">' + (r.maxSpeed > 0 ? r.maxSpeed : '\u2014') + '</td>' +
+          '<td style="' + td + 'white-space:nowrap;color:#4a5568;">' + escapeHtml(fmtMaxSpeedAtShort(r)) + '</td>' +
+          '<td style="' + td + '">' + mapLinkHtml(r) + '</td>' +
+          '<td style="' + td + 'text-align:right;">' + escapeHtml(r.speedLimitLabel) + '</td>' +
+          '<td style="' + td + 'text-align:right;">' + (r.avgOver != null ? r.avgOver.toFixed(1) : 'N/A') + '</td>' +
+          '</tr>';
+      });
+      document.getElementById('summaryTableBody').innerHTML = html;
+    }
+
+    // Icon logic for the Top 10% report: absolute Total Time or absolute Max
+    // Speed, NOT km/h-over-limit. This mirrors the "speeding-top10pct"
+    // spreadsheet, which predates and differs from the over-limit-based
+    // action-threshold report above.
+    function topPctFlagFor(r) {
+      if (r.totalMinutes >= MINUTES_CRITICAL || r.maxSpeed >= TOPPCT_MAX_SPEED_CRITICAL) return '✕';
+      if (r.totalMinutes >= MINUTES_WATCH || r.maxSpeed >= TOPPCT_MAX_SPEED_WATCH) return '!';
+      return '';
+    }
+
+    // Single source of truth for the Top 10% report: ranks vehicles with
+    // speeding events by Total Time (Mins) Speeding alone and keeps only
+    // those at or above the 90th-percentile threshold for that measure —
+    // i.e. the worst ~10% of the population, worst first. Below the
+    // MIN_POPULATION_FOR_DECILE floor, percentile90() returns Infinity and
+    // the set is empty rather than a meaningless single "top" vehicle.
+    function buildTopPctSet(population) {
+      var withEvents = population.filter(function (r) { return r.events > 0; });
+      var threshold = percentile90(withEvents.map(function (r) { return r.totalMinutes; }));
+
+      var rows = threshold === Infinity
+        ? []
+        : withEvents.filter(function (r) { return r.totalMinutes >= threshold; });
+
+      rows = rows.slice().sort(function (a, b) { return b.totalMinutes - a.totalMinutes; });
+
+      var note = threshold === Infinity
+        ? 'Fewer than ' + MIN_POPULATION_FOR_DECILE + ' vehicles with speeding events — not enough for a meaningful top-10% ranking.'
+        : 'Top 10% by Total Time (Mins) Speeding \u2014 worst ' + rows.length + ' of ' + withEvents.length +
+          ' vehicle(s) with speeding events in this period.';
+
+      return { rows: rows, count: rows.length, population: withEvents.length, threshold: threshold, note: note };
+    }
+
+    function renderTopPct(population) {
+      var set = buildTopPctSet(population);
+      lastTopPctRows = set.rows;
+
+      var p = lastPercentiles || { events: Infinity, minutes: Infinity, maxSpeed: Infinity, over: Infinity, maxOver: Infinity };
+
+      document.getElementById('topPctSubtitle').textContent = set.note;
+      document.getElementById('topPctWrap').style.display = 'block';
+
+      if (set.rows.length === 0) {
+        document.getElementById('topPctTableBody').innerHTML =
+          '<tr><td colspan="10" style="padding:18px;text-align:center;color:#68788d;">' +
+          escapeHtml(set.note) + '</td></tr>';
+        return;
+      }
+
+      function shade(val, threshold) {
+        return val >= threshold && threshold !== Infinity ? 'background:#fdecea;color:#842029;font-weight:600;' : '';
+      }
+
+      var html = '';
+      set.rows.forEach(function (r) {
+        var flag = topPctFlagFor(r);
+        var flagBadge = flag === '\u2715'
+          ? '<span style="background:#f8d7da;color:#842029;padding:2px 8px;border-radius:3px;font-weight:600;">\u2715</span>'
+          : (flag === '!' ? '<span style="background:#fff3cd;color:#664d03;padding:2px 8px;border-radius:3px;font-weight:600;">!</span>' : '');
+        var td = 'padding:8px 12px;border-top:1px solid #f2f4f6;';
+
+        html += '<tr>' +
+          '<td style="' + td + '">' + escapeHtml(r.fleet) + '</td>' +
+          '<td style="' + td + 'font-weight:600;">' + escapeHtml(r.vehicle) + '</td>' +
+          '<td style="' + td + 'text-align:center;">' + flagBadge + '</td>' +
+          '<td style="' + td + 'text-align:right;' + shade(r.events, p.events) + '">' + r.events + '</td>' +
+          '<td style="' + td + 'text-align:right;' + shade(r.totalMinutes, p.minutes) + '">' + r.totalMinutes.toFixed(2) + '</td>' +
+          '<td style="' + td + 'text-align:right;' + shade(r.maxSpeed, p.maxSpeed) + '">' + (r.maxSpeed > 0 ? r.maxSpeed : '\u2014') + '</td>' +
+          '<td style="' + td + 'white-space:nowrap;color:#4a5568;">' + escapeHtml(fmtMaxSpeedAtShort(r)) + '</td>' +
+          '<td style="' + td + '">' + mapLinkHtml(r) + '</td>' +
+          '<td style="' + td + 'text-align:right;">' + escapeHtml(r.speedLimitLabel) + '</td>' +
+          '<td style="' + td + 'text-align:right;' + (r.avgOver != null ? shade(r.avgOver, p.over) : '') + '">' + (r.avgOver != null ? r.avgOver.toFixed(1) : 'N/A') + '</td>' +
+          '</tr>';
+      });
+      document.getElementById('topPctTableBody').innerHTML = html;
+    }
+
+    // Produces the Top 10% by Total Time report as a standalone PDF, in the
+    // same layout as the circulated "speeding-top10pct" spreadsheet: single
+    // ranking measure (Total Time), red shading per-column at that column's
+    // own top-10% threshold, icons based on absolute Total Time / Max Speed.
+    function downloadTopPctPdf() {
+      if (!window.jspdf || !window.jspdf.jsPDF) { alert('PDF library did not load — check your internet connection and try again.'); return; }
+
+      var withEvents = lastRows.filter(function (r) { return r.events > 0; });
+      if (withEvents.length === 0) { alert('No speeding events in this period — nothing to report.'); return; }
+
+      var set = buildTopPctSet(withEvents);
+      if (set.rows.length === 0) { alert(set.note); return; }
+
+      var p = lastPercentiles || { events: Infinity, minutes: Infinity, maxSpeed: Infinity, over: Infinity, maxOver: Infinity };
+
+      // Report order: worst Total Time first, as in the source spreadsheet.
+      var reportRows = set.rows;
+
+      var doc = new window.jspdf.jsPDF({ orientation: 'landscape' });
+      var dbName = sessionInfo ? sessionInfo.database : '';
+      var RED_FILL = [253, 236, 234];
+      var RED_TEXT = [132, 32, 41];
+
+      doc.setFontSize(12);
+      doc.setTextColor(26, 43, 60);
+      doc.text('Recommend Managers Act on the following cases:', 14, 15);
+
+      doc.setFontSize(9);
+      doc.setTextColor(100);
+      doc.text('Red shading equals Top 10% for that measure', 283, 15, { align: 'right' });
+      doc.text('Icons =  !  indicates Total Time (30-59 min) or Max Speed (120-129.9). X indicates Total Time 60 min+ or Max Speed 130+', 14, 21);
+      doc.text((dbName ? dbName + '   |   ' : '') + lastRangeLabel + '   |   Generated ' + new Date().toLocaleString(), 14, 26);
+      doc.text(set.note, 14, 30.5);
+
+      var prevFleet = null;
+      var body = reportRows.map(function (r) {
+        var fleetCell = (r.fleet === prevFleet) ? '' : r.fleet;
+        prevFleet = r.fleet;
+        var icon = topPctFlagFor(r);
+        return [
+          icon === '\u2715' ? 'X' : icon,
+          fleetCell,
+          r.vehicle,
+          String(r.events),
+          r.totalMinutes.toFixed(1),
+          r.maxSpeed > 0 ? String(r.maxSpeed) : '',
+          fmtMaxSpeedAtShort(r),
+          r.speedLimitLabel === 'N/A' ? '' : r.speedLimitLabel,
+          r.avgOver != null ? r.avgOver.toFixed(1) : ''
+        ];
+      });
+
+      doc.autoTable({
+        startY: 35,
+        head: [['', 'Fleet', 'Vehicle', 'Number of Events', 'Total Time (Mins) Speeding',
+                'Max of Max Speed (km/h)', 'Max Speed Date/Time',
+                'Speed Limit(s) Triggered (km/h)', 'Average of Speed Over Limit']],
+        body: body,
+        styles: { fontSize: 8.5, cellPadding: 2.2, lineColor: [222, 228, 234], lineWidth: 0.1 },
+        headStyles: { fillColor: [26, 43, 60], textColor: 255, fontSize: 8.5, halign: 'center', valign: 'middle' },
+        columnStyles: {
+          0: { cellWidth: 8, halign: 'center', fontStyle: 'bold' },
+          1: { cellWidth: 34, fontStyle: 'bold' },
+          2: { cellWidth: 27 },
+          3: { halign: 'right' },
+          4: { halign: 'right' },
+          5: { halign: 'right' },
+          6: { halign: 'left', cellWidth: 34 },
+          7: { halign: 'right' },
+          8: { halign: 'right' }
+        },
+        didParseCell: function (data) {
+          if (data.section !== 'body') return;
+          var r = reportRows[data.row.index];
+          var col = data.column.index;
+
+          if (col === 0) {
+            if (data.cell.raw === 'X') data.cell.styles.textColor = [192, 57, 43];
+            else if (data.cell.raw === '!') data.cell.styles.textColor = [153, 101, 3];
+            return;
+          }
+
+          var hit =
+            (col === 3 && p.events !== Infinity && r.events >= p.events) ||
+            (col === 4 && p.minutes !== Infinity && r.totalMinutes >= p.minutes) ||
+            (col === 5 && p.maxSpeed !== Infinity && r.maxSpeed > 0 && r.maxSpeed >= p.maxSpeed) ||
+            (col === 8 && p.over !== Infinity && r.avgOver != null && r.avgOver >= p.over);
+
+          if (hit) {
+            data.cell.styles.fillColor = RED_FILL;
+            data.cell.styles.textColor = RED_TEXT;
+            data.cell.styles.fontStyle = 'bold';
+          }
+        }
+      });
+
+      var pageCount = doc.internal.getNumberOfPages();
+      for (var page = 1; page <= pageCount; page += 1) {
+        doc.setPage(page);
+        doc.setFontSize(8);
+        doc.setTextColor(120);
+        doc.text('Top 10% is a prioritisation aid, not a finding of driver fault.', 14, 200);
+        doc.text('Page ' + page + ' of ' + pageCount, 283, 200, { align: 'right' });
+      }
+
+      var stamp = new Date().toISOString().slice(0, 10);
+      doc.save('speeding-top10pct-' + stamp + '.pdf');
+    }
+
+    // Produces the manager report in the same layout as the circulated
+    // spreadsheet: fleet-grouped, icon column, red shading on any cell in the
+    // top decile for its own measure.
+    function downloadReportPdf() {
+      if (!window.jspdf || !window.jspdf.jsPDF) { alert('PDF library did not load — check your internet connection and try again.'); return; }
+
+      var p = lastPercentiles || { events: Infinity, minutes: Infinity, maxSpeed: Infinity, over: Infinity, maxOver: Infinity };
+
+      var withEvents = lastRows.filter(function (r) { return r.events > 0; });
+      if (withEvents.length === 0) { alert('No speeding events in this period — nothing to report.'); return; }
+
+      // Same function the on-screen summary uses, so the PDF cannot disagree
+      // with the dashboard.
+      var set = buildReportSet(withEvents);
+      if (set.rows.length === 0) { alert('No vehicles crossed an action threshold this period — nothing to report.'); return; }
+
+      // Spreadsheet order: fleet A–Z, then vehicle A–Z within the fleet.
+      var reportRows = set.rows.slice().sort(function (a, b) {
+        if (a.fleet !== b.fleet) return String(a.fleet).localeCompare(String(b.fleet));
+        return String(a.vehicle).localeCompare(String(b.vehicle));
+      });
+
+      var doc = new window.jspdf.jsPDF({ orientation: 'landscape' });
+      var dbName = sessionInfo ? sessionInfo.database : '';
+      var RED_FILL = [253, 236, 234];
+      var RED_TEXT = [132, 32, 41];
+
+      doc.setFontSize(12);
+      doc.setTextColor(26, 43, 60);
+      doc.text('Recommend Managers Act on the following cases:', 14, 15);
+      var shadingActive = p.events !== Infinity || p.minutes !== Infinity ||
+                          p.maxSpeed !== Infinity || p.over !== Infinity || p.maxOver !== Infinity;
+
+      doc.setFontSize(9);
+      doc.setTextColor(100);
+      doc.text(shadingActive ? 'Red shading highlights the highest values in each column' : '', 283, 15, { align: 'right' });
+      doc.text('Icons =  !  30-59 min speeding, or 20-29 km/h over the posted limit.    X  60+ min speeding, or 30+ km/h over the posted limit.', 14, 21);
+      doc.text((dbName ? dbName + '   |   ' : '') + lastRangeLabel + '   |   Generated ' + new Date().toLocaleString(), 14, 26);
+      doc.text(set.note, 14, 30.5);
+
+      var prevFleet = null;
+      var body = reportRows.map(function (r) {
+        var fleetCell = (r.fleet === prevFleet) ? '' : r.fleet;
+        prevFleet = r.fleet;
+        var icon = flagFor(r);
+        return [
+          icon === '\u2715' ? 'X' : icon,
+          fleetCell,
+          r.vehicle,
+          String(r.events),
+          r.totalMinutes.toFixed(1),
+          r.maxOver != null ? overPhrase(r) : 'N/A',
+          r.maxSpeed > 0 ? String(r.maxSpeed) : '',
+          fmtMaxSpeedAtShort(r),
+          r.speedLimitLabel === 'N/A' ? '' : r.speedLimitLabel,
+          r.avgOver != null ? r.avgOver.toFixed(1) : ''
+        ];
+      });
+
+      doc.autoTable({
+        startY: 35,
+        head: [['', 'Fleet', 'Vehicle', 'Number of Events', 'Total Time (Mins) Speeding',
+                'Worst Over Limit (km/h)', 'Max of Max Speed (km/h)', 'Max Speed Date/Time',
+                'Speed Limit(s) Triggered (km/h)', 'Average of Speed Over Limit']],
+        body: body,
+        styles: { fontSize: 8.5, cellPadding: 2.2, lineColor: [222, 228, 234], lineWidth: 0.1 },
+        headStyles: { fillColor: [26, 43, 60], textColor: 255, fontSize: 8.5, halign: 'center', valign: 'middle' },
+        columnStyles: {
+          0: { cellWidth: 8, halign: 'center', fontStyle: 'bold' },
+          1: { cellWidth: 34, fontStyle: 'bold' },
+          2: { cellWidth: 27 },
+          3: { halign: 'right' },
+          4: { halign: 'right' },
+          5: { halign: 'right', cellWidth: 30, fontStyle: 'bold' },
+          6: { halign: 'right' },
+          7: { halign: 'left', cellWidth: 30 },
+          8: { halign: 'right' },
+          9: { halign: 'right' }
+        },
+        didParseCell: function (data) {
+          if (data.section !== 'body') return;
+          var r = reportRows[data.row.index];
+          var col = data.column.index;
+
+          if (col === 0) {
+            if (data.cell.raw === 'X') data.cell.styles.textColor = [192, 57, 43];
+            else if (data.cell.raw === '!') data.cell.styles.textColor = [153, 101, 3];
+            return;
+          }
+
+          var hit =
+            (col === 3 && p.events !== Infinity && r.events >= p.events) ||
+            (col === 4 && p.minutes !== Infinity && r.totalMinutes >= p.minutes) ||
+            (col === 5 && p.maxOver !== Infinity && r.maxOver != null && r.maxOver >= p.maxOver) ||
+            (col === 6 && p.maxSpeed !== Infinity && r.maxSpeed > 0 && r.maxSpeed >= p.maxSpeed) ||
+            (col === 9 && p.over !== Infinity && r.avgOver != null && r.avgOver >= p.over);
+
+          if (hit) {
+            data.cell.styles.fillColor = RED_FILL;
+            data.cell.styles.textColor = RED_TEXT;
+            data.cell.styles.fontStyle = 'bold';
+          }
+        }
+      });
+
+      var pageCount = doc.internal.getNumberOfPages();
+      for (var page = 1; page <= pageCount; page += 1) {
+        doc.setPage(page);
+        doc.setFontSize(8);
+        doc.setTextColor(120);
+        doc.text('This report is a prioritisation aid, not a finding of driver fault.', 14, 200);
+        doc.text('Page ' + page + ' of ' + pageCount, 283, 200, { align: 'right' });
+      }
+
+      var stamp = new Date().toISOString().slice(0, 10);
+      doc.save('speeding-manager-report-' + stamp + '.pdf');
+    }
+
+    function card(label, value, color, subtitle) {
+      return '<div style="background:#fff;border-radius:8px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.08);">' +
+        '<div style="font-size:12px;color:#68788d;margin-bottom:4px;">' + escapeHtml(label) + '</div>' +
+        '<div style="font-size:22px;font-weight:700;color:' + (color || '#1a2b3c') + ';">' + value + '</div>' +
+        (subtitle ? '<div style="font-size:11px;color:#8a97a8;margin-top:3px;">' + escapeHtml(subtitle) + '</div>' : '') +
+        '</div>';
+    }
+
+    // Reads the way a manager would say it out loud.
+    function overPhrase(r) {
+      if (r.maxOver == null) return '';
+      return Math.round(r.maxOver) + ' over (' + Math.round(r.maxOverSpeed) +
+             ' in a ' + Math.round(r.maxOverLimit) + ')';
+    }
+
+    function fmtMaxSpeedAt(r) {
+      if (!r.maxSpeedAt) return '';
+      var d = new Date(r.maxSpeedAt);
+      return isNaN(d.getTime()) ? '' : d.toLocaleString();
+    }
+
+    function fmtMaxSpeedAtShort(r) {
+      if (!r.maxSpeedAt) return '';
+      var d = new Date(r.maxSpeedAt);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function mapUrl(r) {
+      if (r.maxSpeedLat == null || r.maxSpeedLon == null) return '';
+      return 'https://www.google.com/maps?q=' + r.maxSpeedLat.toFixed(6) + ',' + r.maxSpeedLon.toFixed(6);
+    }
+
+    // Devices aggregated without GPS detail have no coordinates, so no link.
+    function mapLinkHtml(r) {
+      var u = mapUrl(r);
+      return u ? '<a href="' + u + '" target="_blank" rel="noopener" style="color:#2d6cdf;text-decoration:none;">Map</a>' : '';
+    }
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function setButtonsEnabled(enabled) {
+      ['refreshBtn', 'exportBtn', 'applyRulesBtn', 'daysSelect', 'showAllToggle', 'downloadPdfBtn', 'downloadTopPctPdfBtn'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.disabled = !enabled;
+      });
+    }
+
+    function exportData() {
+      if (lastRows.length === 0) { alert('Nothing to export yet.'); return; }
+      var data = lastRows.map(function (r) {
+        return {
+          Fleet: r.fleet,
+          Vehicle: r.vehicle,
+          Flag: flagFor(r),
+          'Number of Events': r.events,
+          'Total Time (Mins) Speeding': Number(r.totalMinutes.toFixed(2)),
+          'Worst Over Limit (km/h)': r.maxOver != null ? Number(r.maxOver.toFixed(1)) : 'N/A',
+          'Speed At Worst (km/h)': r.maxOverSpeed != null ? Math.round(r.maxOverSpeed) : '',
+          'Posted Limit At Worst (km/h)': r.maxOverLimit != null ? Math.round(r.maxOverLimit) : '',
+          'Max Speed (km/h)': r.maxSpeed || '',
+          'Max Speed Date/Time': fmtMaxSpeedAt(r),
+          'Location': mapUrl(r),
+          'Speed Limit(s) Triggered (km/h)': r.speedLimitLabel === 'N/A' ? '' : r.speedLimitLabel,
+          'Avg Speed Over Limit': r.avgOver != null ? Number(r.avgOver.toFixed(1)) : 'N/A'
+        };
+      });
+      var ws = XLSX.utils.json_to_sheet(data);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Speeding');
+      var stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, 'speeding-monitor-' + stamp + '.xlsx');
+    }
+
+    // ---------- lifecycle ----------
+
+    return {
+      initialize: function (api, state, callback) {
+        // Guard in case MyGeotab invokes initialize more than once for this instance.
+        if (apiRef) { dbg('initialize() called again — ignoring, add-in already running'); callback(); return; }
+        apiRef = api;
+        dbg('initialize()');
+
+        api.getSession(function (session) {
+          sessionInfo = session;
+          dbg('Session — user: ' + session.userName + ', db: ' + session.database);
+        });
+
+        document.getElementById('refreshBtn').onclick = loadData;
+        document.getElementById('daysSelect').onchange = loadData;
+        document.getElementById('showAllToggle').onchange = loadData;
+        document.getElementById('exportBtn').onclick = exportData;
+        document.getElementById('downloadPdfBtn').onclick = downloadReportPdf;
+        document.getElementById('downloadTopPctPdfBtn').onclick = downloadTopPctPdf;
+        // Changing the basis re-renders from data already in memory — no refetch.
+        document.getElementById('applyRulesBtn').onclick = function () {
+          var boxes = document.querySelectorAll('#ruleList input[type=checkbox]');
+          var ids = new Set();
+          boxes.forEach(function (b) { if (b.checked) ids.add(b.getAttribute('data-rule-id')); });
+          selectedRuleIds = ids;
+          loadData();
+        };
+
+        loadData();
+        callback();
+      },
+      focus: function (api, state) {
+        apiRef = api;
+        dbg('focus()');
+      },
+      blur: function () {
+        dbg('blur()');
+      }
+    };
+  };
+
+})();
+</script>
+</body>
+</html>
